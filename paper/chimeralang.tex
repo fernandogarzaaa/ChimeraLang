@@ -20,6 +20,11 @@
 \usepackage{subcaption}
 \usepackage{tikz}
 \usetikzlibrary{arrows.meta,positioning,shapes.geometric,fit,calc}
+\usepackage{textcomp}
+
+% ─── Compatibility: define semantic brackets without stmaryrd ──────
+\providecommand{\llbracket}{[\![}
+\providecommand{\rrbracket}{]\!]}
 
 % ─── Listings style for ChimeraLang ────────────────────────────────
 \definecolor{chimkey}{RGB}{0,100,180}
@@ -78,7 +83,7 @@
 
 \author{%
   \textsc{The ChimeraLang Project}\\[4pt]
-  \texttt{https://github.com/chimeralang}\\[12pt]
+  \texttt{https://github.com/fernandogarzaaa/ChimeraLang}\\[12pt]
   \small Draft v1.0 --- \today
 }
 
@@ -391,25 +396,25 @@ A \emph{ChimeraValue} is a tuple $(\mathit{raw}, c, \tau, f)$ where:
 ChimeraLang provides four type constructors that constrain how confidence
 interacts with values:
 
-\begin{definition}[Confident\textlangle T\textrangle]
+\begin{definition}[Confident$\langle$T$\rangle$]
 A value $x : \texttt{Confident<T>}$ is a ChimeraValue where the confidence
 $c.v \geq 0.95$. Construction of a \texttt{Confident<T>} with $c.v < 0.95$
 is a runtime error.
 \end{definition}
 
-\begin{definition}[Explore\textlangle T\textrangle]
+\begin{definition}[Explore$\langle$T$\rangle$]
 A value $x : \texttt{Explore<T>}$ carries an additional parameter
 $\mathit{budget} \in \mathbb{R}_{\geq 0}$ that bounds the scope of
 speculative computation. Any confidence value is permitted.
 \end{definition}
 
-\begin{definition}[Converge\textlangle T\textrangle]
+\begin{definition}[Converge$\langle$T$\rangle$]
 A value $x : \texttt{Converge<T>}$ aggregates branch values
 $[v_1, \ldots, v_N]$ from a gate execution. The final confidence is
 determined by the collapse strategy.
 \end{definition}
 
-\begin{definition}[Provisional\textlangle T\textrangle]
+\begin{definition}[Provisional$\langle$T$\rangle$]
 A value $x : \texttt{Provisional<T>}$ is held as true until explicitly
 revoked. Provisional values are flagged in integrity reports and
 cannot be promoted to \texttt{Confident<T>} without external verification.
