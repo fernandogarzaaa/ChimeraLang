@@ -1,0 +1,1260 @@
+\documentclass[11pt,a4paper]{article}
+
+% ─── Packages ───────────────────────────────────────────────────────
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\usepackage{cleveref}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{enumitem}
+\usepackage{float}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric,fit,calc}
+
+% ─── Listings style for ChimeraLang ────────────────────────────────
+\definecolor{chimkey}{RGB}{0,100,180}
+\definecolor{chimtype}{RGB}{160,32,80}
+\definecolor{chimstr}{RGB}{0,128,64}
+\definecolor{chimcom}{RGB}{128,128,128}
+\definecolor{chimbg}{RGB}{248,248,252}
+
+\lstdefinelanguage{chimera}{
+  keywords={val,fn,gate,goal,reason,about,end,must,allow,forbidden,
+            given,explore,evaluate,commit,assert,return,if,else,
+            branches,collapse,threshold,fallback,constraints,quality,
+            explore_budget,emit},
+  keywordstyle=\color{chimkey}\bfseries,
+  keywords=[2]{Confident,Explore,Converge,Provisional,Ephemeral,
+               Persistent,Int,Float,Bool,Text,Void},
+  keywordstyle=[2]\color{chimtype}\bfseries,
+  stringstyle=\color{chimstr},
+  commentstyle=\color{chimcom}\itshape,
+  morestring=[b]",
+  morecomment=[l]{//},
+  morecomment=[s]{/*}{*/},
+  sensitive=true,
+}
+
+\lstset{
+  language=chimera,
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{chimbg},
+  frame=single,
+  framerule=0.4pt,
+  rulecolor=\color{gray!40},
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  numbersep=8pt,
+  tabsize=2,
+  breaklines=true,
+  showstringspaces=false,
+  captionpos=b,
+  aboveskip=10pt,
+  belowskip=8pt,
+}
+
+% ─── Theorem environments ──────────────────────────────────────────
+\newtheorem{definition}{Definition}[section]
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{property}{Property}[section]
+
+% ─── Title block ───────────────────────────────────────────────────
+\title{%
+  \textbf{ChimeraLang: A Programming Language for\\
+  Auditable AI Reasoning with Probabilistic Types\\
+  and Epistemic Consensus Gates}%
+}
+
+\author{%
+  \textsc{The ChimeraLang Project}\\[4pt]
+  \texttt{https://github.com/chimeralang}\\[12pt]
+  \small Draft v1.0 --- \today
+}
+
+\date{}
+
+% ════════════════════════════════════════════════════════════════════
+\begin{document}
+\maketitle
+
+% ─── Abstract ──────────────────────────────────────────────────────
+\begin{abstract}
+Large language models (LLMs) and autonomous AI agents increasingly perform
+multi-step reasoning, yet no existing programming language provides first-class
+constructs for representing uncertainty, managing disagreement between reasoning
+paths, or cryptographically auditing the provenance of conclusions. We present
+\textbf{ChimeraLang}, a novel programming language designed exclusively for AI
+cognition. ChimeraLang introduces four core innovations:
+(1)~a \emph{probabilistic type system} where every value carries a confidence
+score that propagates through all operations and is enforced at the type level;
+(2)~\emph{epistemic consensus gates} that spawn $N$ independent reasoning
+branches with injected noise, then collapse to a committed output via formal
+voting strategies;
+(3)~a built-in \emph{hallucination detection framework} with five
+complementary scanning strategies integrated into the language runtime; and
+(4)~a \emph{cryptographic integrity proof system} based on Merkle-chain
+reasoning traces and SHA-256 gate certificates that produces a machine-verifiable
+audit of every execution.
+We describe the language design, formalize its type rules, detail the execution
+semantics of the Quantum Consensus Virtual Machine, and evaluate a reference
+implementation comprising approximately 3{,}000 lines of working code.
+ChimeraLang demonstrates that uncertainty, disagreement, and auditability can be
+unified as language-level concerns rather than external tooling, offering a
+foundation for safer and more transparent AI-agent architectures.
+\end{abstract}
+
+\vspace{6pt}
+\noindent\textbf{Keywords:}
+programming languages, AI reasoning, probabilistic types, hallucination detection,
+epistemic consensus, integrity proofs, language design, AI safety
+
+\vspace{4pt}
+\noindent\textbf{ACM Classification:}
+D.3.2 [Language Classifications]: Specialized application languages;
+I.2.0 [Artificial Intelligence]: General---Cognitive simulation
+
+% ════════════════════════════════════════════════════════════════════
+\section{Introduction}
+\label{sec:intro}
+
+The rise of large language models (LLMs) and autonomous AI agents has created a
+fundamental mismatch between the tools we use to program computers and the
+entities that increasingly execute multi-step reasoning. Traditional programming
+languages---from C to Python to Rust---were designed under a core assumption:
+\emph{the executor is deterministic and correct}. A CPU does not hallucinate. A
+function, given the same inputs, returns the same output. Side effects are
+explicit and controlled.
+
+AI agents violate every one of these assumptions. An LLM may produce different
+outputs for identical inputs. Its internal ``reasoning'' is opaque. It may
+fabricate facts with high apparent confidence---a phenomenon known as
+\emph{hallucination}~\cite{ji2023hallucination}. When multiple models or
+reasoning paths are combined, there is no formal mechanism for expressing
+disagreement, weighting competing conclusions, or collapsing divergent paths into
+a committed decision.
+
+Current approaches treat these problems as external concerns. Hallucination
+detectors are bolted onto pipelines as post-hoc filters~\cite{manakul2023selfcheckgpt}.
+Confidence scores are estimated after generation rather than propagated during
+computation. Multi-model consensus is implemented via ad-hoc voting scripts
+rather than formal language constructs. Provenance tracking, when it exists at
+all, relies on logging frameworks rather than cryptographic guarantees.
+
+We argue that these are not engineering problems to be solved with better
+tooling---they are \emph{language-level concerns} that require language-level
+solutions. When uncertainty is a fundamental property of the executor, the type
+system should encode it. When disagreement between reasoning paths is expected,
+the language should provide constructs for spawning, evaluating, and collapsing
+them. When every conclusion may be wrong, the execution model should produce
+cryptographic proof of how it was reached.
+
+\subsection{Contributions}
+\label{sec:contributions}
+
+This paper presents \textbf{ChimeraLang}, a new programming language designed
+exclusively for AI cognition, with the following contributions:
+
+\begin{enumerate}[leftmargin=2em]
+  \item \textbf{Probabilistic Type System.}
+    Every value in ChimeraLang carries a \emph{confidence score} in $[0, 1]$
+    that is propagated through all operations. Four probabilistic type
+    constructors---\texttt{Confident<T>}, \texttt{Explore<T>},
+    \texttt{Converge<T>}, and \texttt{Provisional<T>}---enforce certainty
+    boundaries at the type level, making it impossible to silently present
+    uncertain results as definitive. (\Cref{sec:typesystem})
+
+  \item \textbf{Epistemic Consensus Gates.}
+    The \texttt{gate} construct spawns $N$ independent reasoning branches, injects
+    controlled Gaussian noise into each branch's confidence scores, and collapses
+    results via one of three formal voting strategies: \emph{majority},
+    \emph{weighted\_vote}, or \emph{highest\_confidence}. Unlike concurrency
+    primitives in Go or Erlang, gates model \emph{epistemic} disagreement, not
+    parallel I/O. (\Cref{sec:gates})
+
+  \item \textbf{Integrated Hallucination Detection.}
+    The language runtime includes a hallucination detector with five complementary
+    strategies: \emph{branch divergence}, \emph{confidence anomaly},
+    \emph{source gap}, \emph{promotion violation}, and \emph{fingerprint
+    mismatch}. Detection is structural---part of the language, not a
+    post-processing step. (\Cref{sec:hallucination})
+
+  \item \textbf{Cryptographic Integrity Proofs.}
+    Every execution produces an \texttt{IntegrityReport} containing a Merkle-chain
+    reasoning trace, SHA-256 gate certificates, assertion results, and a
+    machine-verifiable verdict (\textsc{Pass}/\textsc{Warn}/\textsc{Fail}).
+    A single \texttt{prove} command audits an entire program. (\Cref{sec:integrity})
+
+  \item \textbf{Reference Implementation.}
+    We provide a complete, working implementation comprising ${\sim}3{,}000$~lines
+    of code: lexer, parser, AST, type checker, virtual machine, hallucination
+    detector, integrity engine, and command-line interface. (\Cref{sec:implementation})
+\end{enumerate}
+
+\subsection{Paper Organization}
+
+\Cref{sec:background} surveys related work in probabilistic programming,
+AI safety, and language-level provenance.
+\Cref{sec:design} presents the language design philosophy.
+\Cref{sec:typesystem} formalizes the probabilistic type system.
+\Cref{sec:execution} describes the Quantum Consensus Virtual Machine.
+\Cref{sec:gates} details epistemic consensus gates.
+\Cref{sec:hallucination} presents the hallucination detection framework.
+\Cref{sec:integrity} describes the cryptographic integrity proof system.
+\Cref{sec:implementation} covers the reference implementation.
+\Cref{sec:evaluation} evaluates the system with example programs.
+\Cref{sec:discussion} discusses limitations and future directions.
+\Cref{sec:conclusion} concludes.
+
+% ════════════════════════════════════════════════════════════════════
+\section{Background and Related Work}
+\label{sec:background}
+
+\subsection{Probabilistic Programming Languages}
+
+Probabilistic programming languages (PPLs) such as
+Stan~\cite{carpenter2017stan}, Pyro~\cite{bingham2019pyro},
+Church~\cite{goodman2008church}, and Gen~\cite{cusumano2019gen} enable
+specification of generative models and perform Bayesian inference over
+probability distributions. These languages are \emph{statistical}---they model
+distributions over data. ChimeraLang is \emph{epistemological}---it models
+confidence in reasoning steps. A PPL answers ``What is the posterior distribution
+of parameter $\theta$?'' ChimeraLang answers ``How confident is this conclusion,
+and can I prove how it was reached?''
+
+The distinction is fundamental: PPLs assume the program is correct and the data
+is uncertain. ChimeraLang assumes the \emph{executor itself} may be uncertain or
+wrong.
+
+\subsection{Neural-Symbolic Integration}
+
+DeepProbLog~\cite{manhaeve2018deepproblog} and NeurASP~\cite{yang2020neurasp}
+combine neural networks with logic programming, allowing probabilistic facts
+derived from neural perception to participate in symbolic reasoning. These
+systems focus on integrating subsymbolic perception with symbolic inference.
+ChimeraLang operates at a higher level of abstraction---it provides constructs
+for an AI agent's \emph{entire reasoning process}, not just the interface between
+neural and symbolic components.
+
+\subsection{LLM Hallucination Detection}
+
+Hallucination in large language models has been studied
+extensively~\cite{ji2023hallucination, zhang2023sirens, huang2023survey}.
+Current detection methods include:
+
+\begin{itemize}[leftmargin=2em]
+  \item \textbf{Self-consistency checking}~\cite{manakul2023selfcheckgpt}:
+    Sampling multiple outputs and measuring agreement.
+  \item \textbf{Retrieval-augmented verification}~\cite{lewis2020retrieval}:
+    Cross-referencing outputs against retrieved documents.
+  \item \textbf{Logit-based uncertainty}~\cite{kadavath2022language}:
+    Using token-level probabilities as confidence proxies.
+  \item \textbf{Chain-of-thought verification}~\cite{wei2022chain}:
+    Checking intermediate reasoning steps.
+\end{itemize}
+
+All of these operate \emph{outside} the language in which the reasoning is
+expressed. They are tools applied to opaque text. ChimeraLang makes hallucination
+detection a \emph{language-level concern}: confidence is part of the type system,
+source provenance is part of the value representation, and divergence scanning is
+part of the runtime.
+
+\subsection{AI Safety and Alignment}
+
+The AI safety community has identified transparency and
+auditability as key desiderata for trustworthy AI
+systems~\cite{amodei2016concrete, hendrycks2022unsolved}. Constitutional
+AI~\cite{bai2022constitutional} and RLHF~\cite{ouyang2022training} approach
+safety from the training side. ChimeraLang approaches it from the
+\emph{execution side}: rather than training models to be safer, it provides a
+runtime that makes unsafe reasoning structurally detectable and auditable.
+
+\subsection{Design by Contract and Dependent Types}
+
+Eiffel's design-by-contract~\cite{meyer1992applying} introduced
+preconditions and postconditions as language constructs. Dependent type systems
+in Idris~\cite{brady2013idris} and Agda~\cite{norell2008dependently} allow
+types to express arbitrary predicates over values. ChimeraLang's semantic
+constraints (\texttt{must:}, \texttt{allow:}, \texttt{forbidden:}) draw
+inspiration from both traditions but apply them to the \emph{reasoning process}
+rather than value predicates. A \texttt{must:} constraint declares what the
+output must satisfy, not how to compute it.
+
+\subsection{Ensemble Methods in Machine Learning}
+
+Ensemble methods---bagging~\cite{breiman1996bagging},
+boosting~\cite{freund1997decision}, and
+dropout~\cite{srivastava2014dropout}---improve model robustness by combining
+multiple learners. ChimeraLang's epistemic consensus gates are conceptually
+related: they spawn $N$ reasoning branches and collapse via voting. The key
+difference is that gates operate at the \emph{reasoning level}, not the model
+level. Each branch executes the same program with injected noise, simulating
+epistemic uncertainty rather than data uncertainty.
+
+\subsection{Provenance and Lineage Tracking}
+
+Data provenance systems such as PROV-O~\cite{lebo2013prov} and
+lineage tracking in databases~\cite{buneman2001and} record how data
+was derived. ChimeraLang extends this concept to \emph{reasoning provenance}:
+every value carries a trace of the operations that produced it, and the trace is
+secured by a Merkle chain with SHA-256 hashing. This is closer to blockchain
+audit trails~\cite{nakamoto2008bitcoin} than database lineage, but applied to
+cognitive processes rather than transactions.
+
+% ════════════════════════════════════════════════════════════════════
+\section{Language Design Philosophy}
+\label{sec:design}
+
+ChimeraLang is built on five design principles that distinguish it from
+both traditional programming languages and existing AI frameworks.
+
+\subsection{Principle 1: Directed Hallucination}
+
+Hallucination is not a bug to be eliminated---it is a feature to be
+\emph{directed}. Creativity, hypothesis generation, and exploratory reasoning
+all require the ability to produce outputs that are not strictly derived from
+inputs. ChimeraLang controls \emph{where} and \emph{how much} an AI may
+explore, not \emph{whether}. The \texttt{Explore<T>} type explicitly marks
+values as speculative, and \texttt{explore\_budget} parameters bound the
+scope of exploration.
+
+\subsection{Principle 2: Probabilistic Types}
+
+Every value carries confidence metadata. The type system enforces certainty
+boundaries: \texttt{Confident<T>} crashes the program if confidence drops below
+0.95, ensuring that values presented as certain actually are. This is not
+optional annotation---it is structural enforcement.
+
+\subsection{Principle 3: Semantic Constraints}
+
+Functions declare \emph{what the output must mean}, not \emph{how to compute
+it}. The \texttt{must:}, \texttt{allow:}, and \texttt{forbidden:} annotations on
+functions specify semantic boundaries. This is intent-first programming: the
+programmer declares the goal, and the runtime searches for satisfying outputs.
+
+\subsection{Principle 4: Quantum Consensus}
+
+Multi-path reasoning with collapse. The \texttt{gate} construct spawns $N$
+branches in ``superposition''---each independently computes a result. A collapse
+function (majority, weighted vote, or highest confidence) selects the committed
+output. The metaphor is quantum-inspired but the mechanism is
+deterministic-with-noise, not quantum-mechanical.
+
+\subsection{Principle 5: Cognitive Transparency}
+
+Every execution produces a reasoning trace as a first-class artifact.
+The trace is not a log---it is a Merkle-chained, hash-verified, integrity-checked
+proof of how the program reached its conclusions. This enables post-hoc auditing,
+hallucination fingerprinting, and visual inspection via the planned ChimeraView
+translator layer.
+
+% ════════════════════════════════════════════════════════════════════
+\section{Probabilistic Type System}
+\label{sec:typesystem}
+
+\subsection{Core Definitions}
+
+\begin{definition}[Confidence]
+\label{def:confidence}
+A \emph{confidence value} $c \in [0,1]$ represents the epistemic certainty
+attached to a computed value. A confidence is a triple
+$(v, s, t)$ where $v \in [0,1]$ is the confidence value,
+$s \in \{\textsc{Computed}, \textsc{Asserted}, \textsc{Derived}\}$ is the
+source, and $t$ is a timestamp.
+\end{definition}
+
+\begin{definition}[ChimeraValue]
+\label{def:chimeravalue}
+A \emph{ChimeraValue} is a tuple $(\mathit{raw}, c, \tau, f)$ where:
+\begin{itemize}[leftmargin=2em]
+  \item $\mathit{raw}$ is the underlying value of any host-language type,
+  \item $c$ is a \emph{Confidence} as in \Cref{def:confidence},
+  \item $\tau = [\tau_1, \tau_2, \ldots]$ is an ordered trace of operations
+    that produced this value,
+  \item $f = \mathrm{SHA\text{-}256}(\mathit{repr}(\mathit{raw}) \;\|\; v \;\|\; s)$
+    is a cryptographic fingerprint.
+\end{itemize}
+\end{definition}
+
+\subsection{Probabilistic Type Constructors}
+
+ChimeraLang provides four type constructors that constrain how confidence
+interacts with values:
+
+\begin{definition}[Confident\textlangle T\textrangle]
+A value $x : \texttt{Confident<T>}$ is a ChimeraValue where the confidence
+$c.v \geq 0.95$. Construction of a \texttt{Confident<T>} with $c.v < 0.95$
+is a runtime error.
+\end{definition}
+
+\begin{definition}[Explore\textlangle T\textrangle]
+A value $x : \texttt{Explore<T>}$ carries an additional parameter
+$\mathit{budget} \in \mathbb{R}_{\geq 0}$ that bounds the scope of
+speculative computation. Any confidence value is permitted.
+\end{definition}
+
+\begin{definition}[Converge\textlangle T\textrangle]
+A value $x : \texttt{Converge<T>}$ aggregates branch values
+$[v_1, \ldots, v_N]$ from a gate execution. The final confidence is
+determined by the collapse strategy.
+\end{definition}
+
+\begin{definition}[Provisional\textlangle T\textrangle]
+A value $x : \texttt{Provisional<T>}$ is held as true until explicitly
+revoked. Provisional values are flagged in integrity reports and
+cannot be promoted to \texttt{Confident<T>} without external verification.
+\end{definition}
+
+\subsection{Confidence Propagation Rules}
+
+Confidence propagates through operations according to the following rules:
+
+\begin{definition}[Binary Confidence Combination]
+\label{def:combine}
+For a binary operation $z = x \oplus y$ where $x$ has confidence $c_x$ and
+$y$ has confidence $c_y$:
+\[
+  c_z = \frac{c_x + c_y}{2}
+\]
+The combined confidence is the arithmetic mean of the operand confidences.
+The source is set to \textsc{Derived}.
+\end{definition}
+
+\begin{property}[Confidence Monotonicity]
+Confidence can only decrease through computation unless explicitly asserted.
+Formal assertion via the \texttt{confident()} builtin is the only mechanism
+for establishing \texttt{Confident<T>} status.
+\end{property}
+
+\begin{property}[Fingerprint Integrity]
+For any ChimeraValue $v$, the fingerprint $f$ is computed at construction time
+and is immutable. Any modification to $\mathit{raw}$ or $c$ produces a new
+ChimeraValue with a new fingerprint rather than mutating the existing one.
+\end{property}
+
+\subsection{Memory Type Modifiers}
+
+Orthogonal to probabilistic types, ChimeraLang provides memory modifiers that
+control value lifecycle:
+
+\begin{table}[H]
+\centering
+\caption{Memory type modifiers and their semantics.}
+\label{tab:memory}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Modifier} & \textbf{Lifetime} & \textbf{Behavior} \\
+\midrule
+\texttt{Ephemeral}   & Current scope  & Garbage-collected at scope exit \\
+\texttt{Persistent}   & Cross-execution & Serialized to knowledge store \\
+\texttt{Provisional}  & Until contradiction & Tracked, can be invalidated \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ════════════════════════════════════════════════════════════════════
+\section{Execution Model: The Quantum Consensus VM}
+\label{sec:execution}
+
+\subsection{Architecture}
+
+The Quantum Consensus Virtual Machine (QCVM) is a tree-walking interpreter
+that executes ChimeraLang programs. It maintains:
+
+\begin{itemize}[leftmargin=2em]
+  \item A \emph{scoped environment} (chain of bindings with parent pointers),
+  \item A \emph{function registry} for user-defined functions,
+  \item A \emph{gate registry} for consensus gate definitions,
+  \item A \emph{gate log} recording all branch results for post-execution analysis,
+  \item An \emph{execution trace} recording every operation as a string entry.
+\end{itemize}
+
+\subsection{Two-Pass Execution}
+
+Program execution proceeds in two passes:
+
+\begin{enumerate}[leftmargin=2em]
+  \item \textbf{Declaration pass:} Register all function and gate declarations
+    without executing them.
+  \item \textbf{Execution pass:} Execute all top-level statements in order.
+\end{enumerate}
+
+This allows forward references: a function may call a gate declared later in
+the source file.
+
+\subsection{Expression Evaluation with Confidence}
+
+Every expression evaluator returns a \texttt{ChimeraValue}, never a raw
+Python value. The key evaluation rules are:
+
+\begin{align}
+\llbracket n \rrbracket &= \mathrm{ChimeraValue}(n, \mathrm{Confidence}(1.0),
+  [\text{``literal''}]) \label{eq:literal} \\
+\llbracket x \oplus y \rrbracket &= \mathrm{ChimeraValue}(
+  x.\mathit{raw} \oplus y.\mathit{raw},\;
+  \mathrm{combine}(x.c, y.c),\;
+  x.\tau \cup y.\tau \cup [\text{``binop''}]) \label{eq:binop} \\
+\llbracket \texttt{if}\; p \;\texttt{then}\; a \;\texttt{else}\; b \rrbracket
+  &= \begin{cases}
+    \llbracket a \rrbracket & \text{if } p.\mathit{raw} = \textit{true} \\
+    \llbracket b \rrbracket & \text{otherwise}
+  \end{cases} \label{eq:if}
+\end{align}
+
+\subsection{Call Dispatch}
+
+Function calls follow a priority chain:
+\begin{enumerate}[leftmargin=2em]
+  \item Builtin functions (\texttt{confident}, \texttt{consensus},
+    \texttt{no\_hallucination}, \texttt{confidence\_of}, \texttt{print})
+  \item Type constructors (\texttt{Confident}, \texttt{Explore},
+    \texttt{Converge}, \texttt{Provisional})
+  \item User-defined functions (from the function registry)
+  \item Gate invocations (from the gate registry)
+  \item Environment callables (closures from \texttt{reason} blocks)
+\end{enumerate}
+
+% ════════════════════════════════════════════════════════════════════
+\section{Epistemic Consensus Gates}
+\label{sec:gates}
+
+The \texttt{gate} construct is the most novel execution primitive in
+ChimeraLang. It models \emph{epistemic disagreement}---the possibility that
+multiple reasoning paths may reach different conclusions about the same question.
+
+\subsection{Gate Declaration}
+
+A gate is declared with the following parameters:
+
+\begin{lstlisting}[caption={Gate declaration syntax.}]
+gate decide(question: Text) -> Confident<Text>
+  branches: 5
+  collapse: weighted_vote
+  threshold: 0.85
+end
+\end{lstlisting}
+
+\begin{itemize}[leftmargin=2em]
+  \item \texttt{branches: $N$} --- the number of independent reasoning branches
+  \item \texttt{collapse: $\sigma$} --- the collapse strategy
+    ($\sigma \in \{\text{majority}, \text{weighted\_vote},
+    \text{highest\_confidence}\}$)
+  \item \texttt{threshold: $\theta$} --- minimum confidence for the collapsed result
+\end{itemize}
+
+\subsection{Gate Execution}
+
+\begin{algorithm}[H]
+\caption{Gate execution with noise injection.}
+\label{alg:gate}
+\begin{algorithmic}[1]
+\Require Gate declaration $G$ with body $B$, branches $N$, collapse strategy $\sigma$
+\Ensure Committed ChimeraValue $r$
+\State $\mathit{results} \gets []$
+\For{$i \gets 1$ \textbf{to} $N$}
+  \State $\mathit{env}_i \gets \text{child environment of current scope}$
+  \State $\mathit{noise}_i \gets \mathcal{N}(0, 0.05)$ \Comment{Gaussian noise}
+  \State Execute body $B$ in $\mathit{env}_i$
+  \State $r_i \gets$ result of $B$
+  \State $r_i.c.v \gets \text{clamp}(r_i.c.v + \mathit{noise}_i, 0, 1)$
+  \State Append $r_i$ to $\mathit{results}$
+\EndFor
+\State $r \gets \text{Collapse}(\mathit{results}, \sigma)$
+\State Log $(\text{gate\_name}, N, \mathit{results}, r)$ to gate log
+\State \Return $r$
+\end{algorithmic}
+\end{algorithm}
+
+The noise injection (line 4) is critical: it ensures that even when all branches
+execute the same code, they may produce slightly different confidence scores.
+This models the real-world phenomenon where re-running an LLM with the same
+prompt yields different outputs.
+
+\subsection{Collapse Strategies}
+
+\begin{definition}[Majority Collapse]
+Return the value that appears most frequently among the $N$ branch results
+(breaking ties by highest confidence). Set the confidence of the result to the
+fraction of branches that agreed:
+\[
+  c_{\text{result}} = \frac{|\{r_i : r_i.\mathit{raw} = r_{\text{winner}}.\mathit{raw}\}|}{N}
+\]
+\end{definition}
+
+\begin{definition}[Weighted Vote Collapse]
+Weight each branch result by its confidence score. The result with the highest
+weighted vote wins:
+\[
+  r_{\text{winner}} = \arg\max_{v \in \mathit{unique}(\mathit{results})}
+  \sum_{r_i : r_i.\mathit{raw} = v} r_i.c.v
+\]
+The confidence is the normalized weight of the winner.
+\end{definition}
+
+\begin{definition}[Highest Confidence Collapse]
+Return the branch result with the single highest confidence score:
+\[
+  r_{\text{winner}} = \arg\max_{r_i} r_i.c.v
+\]
+\end{definition}
+
+\subsection{Comparison with Concurrency Primitives}
+
+\begin{table}[H]
+\centering
+\caption{Epistemic gates vs.\ concurrency primitives.}
+\label{tab:gatecomp}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Property} & \textbf{Go goroutines / Erlang actors} & \textbf{ChimeraLang gates} \\
+\midrule
+Purpose       & Parallel I/O, work distribution & Epistemic disagreement \\
+Branches      & Independent tasks               & Same task, different noise \\
+Communication & Channels / messages              & Implicit via collapse \\
+Result        & All outputs collected            & Single committed value \\
+Noise         & None                             & Gaussian injection \\
+Output        & Set of results                   & One value + gate certificate \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ════════════════════════════════════════════════════════════════════
+\section{Hallucination Detection Framework}
+\label{sec:hallucination}
+
+ChimeraLang's hallucination detector is not a post-processing tool---it is
+an integrated component of the language runtime that scans execution artifacts
+for five categories of anomaly.
+
+\subsection{Detection Strategies}
+
+\begin{definition}[Branch Divergence]
+\label{def:divergence}
+Given gate branch results $[r_1, \ldots, r_N]$, compute the unique raw values.
+If more than a threshold fraction of branches disagree (default: 3+ unique values
+out of 5 branches), flag as \textsc{Branch\_Divergence} with severity
+proportional to the diversity.
+\end{definition}
+
+\begin{definition}[Confidence Anomaly]
+\label{def:confanomaly}
+For each branch result $r_i$, if $r_i.c.v > \theta_{\text{anomaly}}$
+(default: 0.99) while other branches show significantly lower confidence,
+flag as \textsc{Confidence\_Anomaly}. This detects cases where one reasoning
+path is suspiciously more certain than its peers.
+\end{definition}
+
+\begin{definition}[Source Gap]
+\label{def:sourcegap}
+A ChimeraValue with an empty trace $\tau = []$ or confidence source
+\textsc{Asserted} (i.e., claimed rather than derived) is flagged as
+\textsc{Source\_Gap}. This detects values that lack provenance.
+\end{definition}
+
+\begin{definition}[Promotion Violation]
+\label{def:promotion}
+A \texttt{Confident<T>} value whose trace contains operations derived from
+\texttt{Provisional} or \texttt{Explore} sources is flagged as
+\textsc{Promotion\_Violation}. High confidence should not emerge from
+speculative origins.
+\end{definition}
+
+\begin{definition}[Fingerprint Mismatch]
+\label{def:fingerprint}
+Recompute the SHA-256 fingerprint of a ChimeraValue from its current raw
+value and confidence. If the recomputed fingerprint differs from the stored
+fingerprint, flag as \textsc{Fingerprint\_Mismatch}. This detects
+tampering or corruption.
+\end{definition}
+
+\subsection{Severity Classification}
+
+\begin{table}[H]
+\centering
+\caption{Hallucination flag severity levels.}
+\label{tab:severity}
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Kind} & \textbf{Default Severity} & \textbf{Trigger} \\
+\midrule
+Fingerprint Mismatch  & 1.0 (Critical) & Integrity violation \\
+Promotion Violation   & 0.8 (High)     & Uncertain $\to$ certain path \\
+Branch Divergence     & 0.6 (Medium)   & Gate disagreement \\
+Confidence Anomaly    & 0.5 (Medium)   & Suspicious certainty \\
+Source Gap            & 0.3 (Low)      & Missing provenance \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Integration with Execution}
+
+The hallucination detector operates on two artifact types:
+\begin{enumerate}[leftmargin=2em]
+  \item \textbf{Gate logs:} Scanned for branch divergence and confidence anomalies.
+  \item \textbf{Final values:} Scanned for source gaps, promotion violations,
+    and fingerprint mismatches.
+\end{enumerate}
+
+The \texttt{prove} CLI command automatically triggers a full scan and includes
+all flags in the integrity report.
+
+% ════════════════════════════════════════════════════════════════════
+\section{Cryptographic Integrity Proof System}
+\label{sec:integrity}
+
+\subsection{Reasoning Chains}
+
+Every execution produces an ordered trace of operations. The integrity engine
+converts this trace into a \emph{Merkle-chain reasoning chain}:
+
+\begin{definition}[Trace Link]
+A \emph{TraceLink} is a tuple $(i, e, h, h_{\text{prev}})$ where $i$ is the
+index, $e$ is the trace entry (string), $h = \mathrm{SHA\text{-}256}(h_{\text{prev}} \| e)$
+is the hash, and $h_{\text{prev}}$ is the previous link's hash (or the empty
+string for the first link).
+\end{definition}
+
+\begin{definition}[Reasoning Chain]
+A \emph{ReasoningChain} is an ordered list of TraceLinks. The
+\emph{root hash} is the hash of the first link. The chain is
+\emph{valid} if and only if for every link $l_i$ with $i > 0$:
+\[
+  l_i.h = \mathrm{SHA\text{-}256}(l_{i-1}.h \;\|\; l_i.e)
+\]
+\end{definition}
+
+\begin{theorem}[Chain Tamper Detection]
+Any modification to a trace entry $e_k$ in position $k$ will invalidate
+all links $l_j$ with $j \geq k$. The verification algorithm detects this
+by recomputing hashes forward from the root.
+\end{theorem}
+
+\begin{proof}
+By the preimage resistance of SHA-256, modifying $e_k$ changes $h_k$.
+Since $h_{k+1} = \mathrm{SHA\text{-}256}(h_k \| e_{k+1})$, the changed $h_k$
+cascades through all subsequent links. The verifier compares recomputed
+hashes against stored hashes and detects the first mismatch.
+\end{proof}
+
+\subsection{Gate Certificates}
+
+Each gate execution produces a \emph{GateCertificate}:
+
+\begin{definition}[Gate Certificate]
+A certificate $G_c = (\mathit{name}, N, \sigma, \mathit{raw}_{\text{winner}},
+c_{\text{winner}}, h)$ where:
+\[
+  h = \mathrm{SHA\text{-}256}(\mathit{name} \;\|\; N \;\|\; \sigma \;\|\;
+  \mathit{raw}_{\text{winner}} \;\|\; c_{\text{winner}})
+\]
+The certificate attests that gate \emph{name} with $N$ branches and strategy
+$\sigma$ produced the stated result.
+\end{definition}
+
+\subsection{Integrity Report}
+
+The final artifact is an \texttt{IntegrityReport} containing:
+\begin{itemize}[leftmargin=2em]
+  \item The reasoning chain (list of trace links)
+  \item Whether the chain is verified (hash integrity check)
+  \item All gate certificates
+  \item All assertion results (expression, passed/failed)
+  \item All hallucination flags from the detector
+  \item A computed \textbf{verdict}: \textsc{Pass}, \textsc{Warn}, or \textsc{Fail}
+\end{itemize}
+
+\subsection{Verdict Computation}
+
+\begin{algorithm}[H]
+\caption{Integrity verdict computation.}
+\label{alg:verdict}
+\begin{algorithmic}[1]
+\Require Chain verification result $V$, assertion results $A$, hallucination flags $F$
+\Ensure Verdict $\in \{\textsc{Pass}, \textsc{Warn}, \textsc{Fail}\}$
+\If{$V = \textit{false}$}
+  \State \Return \textsc{Fail} \Comment{Chain tampered}
+\EndIf
+\If{$\exists\, a \in A : a.\mathit{passed} = \textit{false}$}
+  \State \Return \textsc{Fail} \Comment{Assertion failed}
+\EndIf
+\If{$\exists\, f \in F : f.\mathit{severity} \geq 0.8$}
+  \State \Return \textsc{Fail} \Comment{Critical hallucination}
+\EndIf
+\If{$F \neq \emptyset$}
+  \State \Return \textsc{Warn} \Comment{Non-critical hallucination flags}
+\EndIf
+\State \Return \textsc{Pass}
+\end{algorithmic}
+\end{algorithm}
+
+% ════════════════════════════════════════════════════════════════════
+\section{Implementation}
+\label{sec:implementation}
+
+\subsection{Architecture}
+
+The reference implementation is bootstrapped in Python~3.14 and comprises
+the following components:
+
+\begin{table}[H]
+\centering
+\caption{Implementation modules and their sizes.}
+\label{tab:modules}
+\begin{tabular}{@{}llr@{}}
+\toprule
+\textbf{Module} & \textbf{Responsibility} & \textbf{Lines} \\
+\midrule
+\texttt{tokens.py}       & Token definitions (70+ types)           & ${\sim}120$ \\
+\texttt{lexer.py}        & Tokenization                            & ${\sim}200$ \\
+\texttt{ast\_nodes.py}   & AST node hierarchy                      & ${\sim}270$ \\
+\texttt{parser.py}       & Recursive-descent parser                & ${\sim}600$ \\
+\texttt{types.py}        & Runtime type system                     & ${\sim}200$ \\
+\texttt{type\_checker.py}& Static type checking                    & ${\sim}200$ \\
+\texttt{vm.py}           & Quantum Consensus VM                    & ${\sim}630$ \\
+\texttt{detect.py}       & Hallucination detector                  & ${\sim}170$ \\
+\texttt{integrity.py}    & Integrity proof engine                  & ${\sim}200$ \\
+\texttt{cli.py}          & Command-line interface                  & ${\sim}200$ \\
+\midrule
+\textbf{Total}           &                                         & ${\sim}\textbf{2{,}800}$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{CLI Commands}
+
+The CLI provides five commands:
+\begin{itemize}[leftmargin=2em]
+  \item \texttt{lex <file>} --- Print the token stream
+  \item \texttt{parse <file>} --- Print the AST
+  \item \texttt{check <file>} --- Run static type checking
+  \item \texttt{run <file> [--trace]} --- Execute the program
+  \item \texttt{prove <file>} --- Execute, scan for hallucinations, and
+    produce a JSON integrity report with verdict
+\end{itemize}
+
+\subsection{Design Decisions}
+
+\paragraph{Python as bootstrap host.}
+Python was chosen for rapid prototyping and accessibility. The language
+specification is independent of the host: a Rust or C++ implementation
+would provide identical semantics with better performance.
+
+\paragraph{Tree-walking interpreter.}
+The v0.1 VM is a tree-walking interpreter (no bytecode compilation).
+This sacrifices performance for debuggability and simplicity. A bytecode
+VM is planned for v0.2.
+
+\paragraph{Gaussian noise injection.}
+Gate branches use $\mathcal{N}(0, 0.05)$ noise to perturb confidence
+scores. The standard deviation of 0.05 was chosen empirically to produce
+meaningful variation without overwhelming the signal. This parameter is
+configurable per gate.
+
+% ════════════════════════════════════════════════════════════════════
+\section{Evaluation}
+\label{sec:evaluation}
+
+We evaluate ChimeraLang with four example programs that exercise the full
+feature set. All programs produce a \textsc{Pass} verdict from the
+\texttt{prove} command.
+
+\subsection{Example 1: Hello Chimera}
+
+\begin{lstlisting}[caption={Minimal ChimeraLang program.}]
+val greeting: Confident<Text> = "Hello from ChimeraLang!"
+emit greeting
+\end{lstlisting}
+
+\textbf{Demonstrates:} Value binding with probabilistic type, confidence
+assignment (1.0 for literals), emit statement. The \texttt{prove} command
+verifies that the greeting maintains full confidence through the Merkle chain.
+
+\subsection{Example 2: Quantum Reasoning}
+
+\begin{lstlisting}[caption={Function with constraints and consensus gate.}]
+fn analyze(data: Text) -> Confident<Text>
+  must: "factual"
+  allow: "inference"
+  forbidden: "speculation"
+
+  val result: Text = "Analysis complete"
+  return result
+end
+
+gate decide(question: Text) -> Confident<Text>
+  branches: 5
+  collapse: weighted_vote
+  threshold: 0.7
+
+  val answer: Text = analyze(question)
+  return answer
+end
+
+val output = decide("Test question")
+assert confident(output) >= 0.5
+assert consensus(output) >= 0.5
+\end{lstlisting}
+
+\textbf{Demonstrates:} Semantic constraints (\texttt{must:}, \texttt{allow:},
+\texttt{forbidden:}), 5-branch gate with weighted vote collapse, assertion-based
+verification. The gate produces slightly different confidence scores per branch
+due to noise injection, and the weighted vote selects the winner.
+
+\subsection{Example 3: Goal-Driven Execution}
+
+\begin{lstlisting}[caption={Reason block with goal declaration.}]
+reason about(problem: Text) -> Explore<Text>
+  given: "knowledge_base"
+  val analysis: Text = "Analyzing: " + problem
+  return analysis
+end
+
+goal "solve the alignment problem"
+  constraints: """
+    safety
+    transparency
+    robustness
+  """
+  quality: """
+    correctness > efficiency
+  """
+  explore_budget: 0.0095
+end
+\end{lstlisting}
+
+\textbf{Demonstrates:} Reason blocks as callable closures with citation
+(\texttt{given:}), goal declarations with multi-line constraint blocks, quality
+ordering, and exploration budgets. The reason block is registered as a callable
+and can be invoked from expressions.
+
+\subsection{Example 4: Hallucination Guard}
+
+\begin{lstlisting}[caption={Explore type with consensus verification.}]
+val inference: Explore<Text> = "Earth might be flat"
+
+gate verify(claim: Text) -> Confident<Text>
+  branches: 7
+  collapse: majority
+  threshold: 0.9
+
+  val checked: Text = "Verified: " + claim
+  return checked
+end
+
+val verified = verify("Earth shape")
+assert consensus(verified) >= 0.5
+assert no_hallucination(verified)
+\end{lstlisting}
+
+\textbf{Demonstrates:} Explicit \texttt{Explore<T>} for speculative content,
+7-branch gate with majority collapse and high threshold, hallucination assertion.
+The \texttt{no\_hallucination} builtin checks the runtime's hallucination
+detection state.
+
+\subsection{Properties Demonstrated}
+
+\begin{table}[H]
+\centering
+\caption{Feature coverage across evaluation programs.}
+\label{tab:coverage}
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+\textbf{Feature} & \textbf{Ex.~1} & \textbf{Ex.~2} & \textbf{Ex.~3} & \textbf{Ex.~4} \\
+\midrule
+Probabilistic types        & \checkmark & \checkmark & \checkmark & \checkmark \\
+Confidence propagation     & \checkmark & \checkmark & \checkmark & \checkmark \\
+Semantic constraints       &            & \checkmark &            &            \\
+Consensus gates            &            & \checkmark &            & \checkmark \\
+Noise injection            &            & \checkmark &            & \checkmark \\
+Collapse strategies        &            & \checkmark &            & \checkmark \\
+Reason blocks              &            &            & \checkmark &            \\
+Goal declarations          &            &            & \checkmark &            \\
+Hallucination assertions   &            &            &            & \checkmark \\
+Merkle-chain integrity     & \checkmark & \checkmark & \checkmark & \checkmark \\
+SHA-256 fingerprints       & \checkmark & \checkmark & \checkmark & \checkmark \\
+\textsc{Pass} verdict      & \checkmark & \checkmark & \checkmark & \checkmark \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ════════════════════════════════════════════════════════════════════
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{Limitations}
+
+\paragraph{No real LLM integration.}
+The v0.1 implementation simulates AI reasoning with deterministic code and
+injected noise. A production system would connect gate branches to actual
+LLM calls, making the noise injection unnecessary (real models produce genuine
+variation). This is an engineering limitation, not a design limitation---the
+language semantics are defined independently of the executor.
+
+\paragraph{Tree-walking performance.}
+The interpreter is $O(n)$ in AST depth for every expression evaluation.
+For large programs, a bytecode compiler targeting a stack-based VM would be
+necessary.
+
+\paragraph{Incomplete type checker.}
+The static type checker performs scope-based checking but does not yet enforce
+all confidence propagation rules at compile time. Full static analysis of
+confidence flow is a non-trivial research problem.
+
+\paragraph{Single-threaded gate execution.}
+Gate branches are currently executed sequentially, not in parallel. With real
+LLM backends, branches would need concurrent execution with timeout handling.
+
+\subsection{Relation to Existing AI Frameworks}
+
+ChimeraLang is not a replacement for LangChain, AutoGen, or CrewAI. Those
+frameworks orchestrate LLM calls from the outside. ChimeraLang provides the
+\emph{language} in which an AI agent reasons. The two layers are complementary:
+an orchestration framework could dispatch ChimeraLang programs to agents, and
+the agents would return integrity-proven results.
+
+\subsection{Toward Self-Hosting}
+
+The ultimate goal of ChimeraLang is self-hosting: an AI agent writes
+ChimeraLang v($n$+1) using ChimeraLang v($n$). Each iteration would encode
+discovered failure modes as \emph{unrepresentable constructs}---patterns that
+the type system prevents rather than the runtime detects. This is analogous to
+Rust's borrow checker, which makes memory unsafety unrepresentable rather than
+merely detectable.
+
+\subsection{Regulatory Implications}
+
+The EU AI Act (2024) requires high-risk AI systems to provide meaningful
+explanation of their decision-making process. ChimeraLang's integrity proofs---
+Merkle-chained reasoning traces with cryptographic certificates---provide a
+technically rigorous response to this requirement. Every decision can be audited
+after the fact with mathematical guarantees of tamper-evidence.
+
+\subsection{Future Work}
+
+\begin{enumerate}[leftmargin=2em]
+  \item \textbf{LLM Backend Integration.}
+    Connect gate branches to real LLM inference endpoints, replacing
+    noise injection with genuine model variation.
+
+  \item \textbf{ChimeraView Visual Translator.}
+    A Node.js-based renderer that converts integrity reports and reasoning
+    traces into interactive visual graphs for human inspection.
+
+  \item \textbf{Bytecode Compiler.}
+    Replace the tree-walking interpreter with a bytecode compiler targeting
+    a stack-based VM for production performance.
+
+  \item \textbf{Full Static Confidence Analysis.}
+    Extend the type checker to track confidence propagation statically,
+    catching promotion violations at compile time.
+
+  \item \textbf{Formal Semantics.}
+    Develop a denotational or operational semantics for ChimeraLang to enable
+    formal verification of programs.
+
+  \item \textbf{Multi-Agent Protocols.}
+    Extend the language with constructs for inter-agent communication,
+    where agents exchange ChimeraValues with confidence and provenance intact.
+
+  \item \textbf{Self-Hosting.}
+    Implement the ChimeraLang compiler in ChimeraLang itself, enabling
+    the self-improvement loop described in \Cref{sec:design}.
+\end{enumerate}
+
+% ════════════════════════════════════════════════════════════════════
+\section{Conclusion}
+\label{sec:conclusion}
+
+We have presented ChimeraLang, a programming language designed for AI cognition
+that makes uncertainty, disagreement, and auditability first-class concerns.
+The language introduces probabilistic types that enforce confidence boundaries,
+epistemic consensus gates that model disagreement as a language primitive,
+integrated hallucination detection with five complementary strategies, and
+cryptographic integrity proofs based on Merkle-chain reasoning traces.
+
+The reference implementation demonstrates that these concepts are not merely
+theoretical---they can be implemented in approximately 3{,}000 lines of code
+and produce working programs that are lexed, parsed, type-checked, executed,
+scanned for hallucinations, and cryptographically proven in a single
+\texttt{prove} command.
+
+ChimeraLang's core thesis is that the next generation of programming languages
+must account for executors that are probabilistic, potentially wrong, and
+opaque. Traditional languages assume \texttt{f(x) = f(x)}. AI systems require
+languages where \texttt{f(x) $\approx$ f(x)}, and the $\approx$ is formally
+represented, propagated, and auditable. ChimeraLang is a first step toward
+that future.
+
+% ════════════════════════════════════════════════════════════════════
+\section*{Acknowledgments}
+
+ChimeraLang was designed and implemented as an exploration of what programming
+languages should look like when the executor is an AI rather than a CPU.
+
+% ════════════════════════════════════════════════════════════════════
+\bibliographystyle{plain}
+
+\begin{thebibliography}{99}
+
+\bibitem{ji2023hallucination}
+Z.~Ji, N.~Lee, R.~Frieske, T.~Yu, D.~Su, Y.~Xu, E.~Ishii, Y.~Bang,
+A.~Madotto, and P.~Fung.
+\newblock Survey of hallucination in natural language generation.
+\newblock {\em ACM Computing Surveys}, 55(12):1--38, 2023.
+
+\bibitem{manakul2023selfcheckgpt}
+P.~Manakul, A.~Liusie, and M.~J.~F.~Gales.
+\newblock {SelfCheckGPT}: Zero-resource black-box hallucination detection for
+  generative large language models.
+\newblock In {\em Proceedings of EMNLP}, 2023.
+
+\bibitem{carpenter2017stan}
+B.~Carpenter, A.~Gelman, M.~D.~Hoffman, D.~Lee, B.~Goodrich, M.~Betancourt,
+M.~Brubaker, J.~Guo, P.~Li, and A.~Riddell.
+\newblock Stan: A probabilistic programming language.
+\newblock {\em Journal of Statistical Software}, 76(1):1--32, 2017.
+
+\bibitem{bingham2019pyro}
+E.~Bingham, J.~P.~Chen, M.~Jankowiak, F.~Obermeyer, N.~Pradhan,
+T.~Karaletsos, R.~Singh, P.~Szerlip, P.~Horsfall, and N.~D.~Goodman.
+\newblock Pyro: Deep universal probabilistic programming.
+\newblock {\em Journal of Machine Learning Research}, 20(28):1--6, 2019.
+
+\bibitem{goodman2008church}
+N.~D.~Goodman, V.~K.~Mansinghka, D.~M.~Roy, K.~Bonawitz, and
+J.~B.~Tenenbaum.
+\newblock Church: A language for generative models.
+\newblock In {\em Proceedings of UAI}, 2008.
+
+\bibitem{cusumano2019gen}
+M.~F.~Cusumano-Towner, F.~A.~Saad, A.~K.~Lew, and V.~K.~Mansinghka.
+\newblock Gen: A general-purpose probabilistic programming system with
+  programmable inference.
+\newblock In {\em Proceedings of PLDI}, 2019.
+
+\bibitem{manhaeve2018deepproblog}
+R.~Manhaeve, S.~Dumancic, A.~Kimmig, T.~Demeester, and L.~De~Raedt.
+\newblock {DeepProbLog}: Neural probabilistic logic programming.
+\newblock In {\em Proceedings of NeurIPS}, 2018.
+
+\bibitem{yang2020neurasp}
+Z.~Yang, A.~Ishay, and J.~Lee.
+\newblock {NeurASP}: Embracing neural networks into answer set programming.
+\newblock In {\em Proceedings of IJCAI}, 2020.
+
+\bibitem{zhang2023sirens}
+Y.~Zhang, Y.~Li, L.~Cui, D.~Cai, L.~Liu, T.~Fu, X.~Huang, E.~Zhao,
+Y.~Zhang, Y.~Chen, et~al.
+\newblock Siren's song in the {AI} ocean: A survey on hallucination in large
+  language models.
+\newblock {\em arXiv preprint arXiv:2309.01219}, 2023.
+
+\bibitem{huang2023survey}
+L.~Huang, W.~Yu, W.~Ma, W.~Zhong, Z.~Feng, H.~Wang, Q.~Chen, W.~Peng,
+X.~Feng, B.~Qin, and T.~Liu.
+\newblock A survey on hallucination in large language models: Principles,
+  taxonomy, challenges, and open questions.
+\newblock {\em arXiv preprint arXiv:2311.05232}, 2023.
+
+\bibitem{lewis2020retrieval}
+P.~Lewis, E.~Perez, A.~Piktus, F.~Petroni, V.~Karpukhin, N.~Goyal,
+H.~K{\"u}ttler, M.~Lewis, W.~Yih, T.~Rockt{\"a}schel, S.~Riedel, and
+D.~Kiela.
+\newblock Retrieval-augmented generation for knowledge-intensive {NLP} tasks.
+\newblock In {\em Proceedings of NeurIPS}, 2020.
+
+\bibitem{kadavath2022language}
+S.~Kadavath, T.~Conerly, A.~Askell, T.~Henighan, et~al.
+\newblock Language models (mostly) know what they know.
+\newblock {\em arXiv preprint arXiv:2207.05221}, 2022.
+
+\bibitem{wei2022chain}
+J.~Wei, X.~Wang, D.~Schuurmans, M.~Bosma, B.~Ichter, F.~Xia, E.~Chi,
+Q.~V.~Le, and D.~Zhou.
+\newblock Chain-of-thought prompting elicits reasoning in large language models.
+\newblock In {\em Proceedings of NeurIPS}, 2022.
+
+\bibitem{amodei2016concrete}
+D.~Amodei, C.~Olah, J.~Steinhardt, P.~Christiano, J.~Schulman, and D.~Man{\'e}.
+\newblock Concrete problems in {AI} safety.
+\newblock {\em arXiv preprint arXiv:1606.06565}, 2016.
+
+\bibitem{hendrycks2022unsolved}
+D.~Hendrycks, N.~Carlini, J.~Mazeika, et~al.
+\newblock Unsolved problems in {ML} safety.
+\newblock {\em arXiv preprint arXiv:2109.13916}, 2022.
+
+\bibitem{bai2022constitutional}
+Y.~Bai, S.~Kadavath, S.~Kundu, A.~Askell, J.~Kernion, A.~Jones,
+A.~Chen, A.~Goldie, A.~Mirhoseini, C.~McKinnon, et~al.
+\newblock Constitutional {AI}: Harmlessness from {AI} feedback.
+\newblock {\em arXiv preprint arXiv:2212.08073}, 2022.
+
+\bibitem{ouyang2022training}
+L.~Ouyang, J.~Wu, X.~Jiang, D.~Almeida, C.~L.~Wainwright, P.~Mishkin,
+C.~Zhang, S.~Agarwal, K.~Slama, A.~Ray, et~al.
+\newblock Training language models to follow instructions with human feedback.
+\newblock In {\em Proceedings of NeurIPS}, 2022.
+
+\bibitem{meyer1992applying}
+B.~Meyer.
+\newblock Applying ``design by contract''.
+\newblock {\em IEEE Computer}, 25(10):40--51, 1992.
+
+\bibitem{brady2013idris}
+E.~Brady.
+\newblock Idris, a general-purpose dependently typed programming language:
+  Design and implementation.
+\newblock {\em Journal of Functional Programming}, 23(5):552--593, 2013.
+
+\bibitem{norell2008dependently}
+U.~Norell.
+\newblock Dependently typed programming in {Agda}.
+\newblock In {\em Proceedings of TLDI}, 2008.
+
+\bibitem{breiman1996bagging}
+L.~Breiman.
+\newblock Bagging predictors.
+\newblock {\em Machine Learning}, 24(2):123--140, 1996.
+
+\bibitem{freund1997decision}
+Y.~Freund and R.~E.~Schapire.
+\newblock A decision-theoretic generalization of on-line learning and an
+  application to boosting.
+\newblock {\em Journal of Computer and System Sciences}, 55(1):119--139, 1997.
+
+\bibitem{srivastava2014dropout}
+N.~Srivastava, G.~Hinton, A.~Krizhevsky, I.~Sutskever, and
+R.~Salakhutdinov.
+\newblock Dropout: A simple way to prevent neural networks from overfitting.
+\newblock {\em Journal of Machine Learning Research}, 15(56):1929--1958, 2014.
+
+\bibitem{lebo2013prov}
+T.~Lebo, S.~Sahoo, D.~McGuinness, K.~Belhajjame, J.~Cheney, D.~Corsar,
+D.~Garijo, S.~Soiland-Reyes, S.~Zednik, and J.~Zhao.
+\newblock {PROV-O}: The {PROV} ontology.
+\newblock {W3C Recommendation}, 2013.
+
+\bibitem{buneman2001and}
+P.~Buneman, S.~Khanna, and W.~C.~Tan.
+\newblock Why and where: A characterization of data provenance.
+\newblock In {\em Proceedings of ICDT}, 2001.
+
+\bibitem{nakamoto2008bitcoin}
+S.~Nakamoto.
+\newblock Bitcoin: A peer-to-peer electronic cash system.
+\newblock 2008.
+
+\end{thebibliography}
+
+\end{document}
