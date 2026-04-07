@@ -50,26 +50,26 @@ class Confidence:
         return ConfidenceLevel.UNKNOWN
 
     def combine(self, other: Confidence) -> Confidence:
-        """Weighted combination for consensus."""
-        avg = (self.value + other.value) / 2.0
-        return Confidence(value=avg, source=f"combined({self.source},{other.source})")
+        """Product rule combination for independent confidences.
+
+        Averaging two 0.5 confidences gives 0.5, but independent uncertainties
+        should compound — the product p*q correctly reflects that both must hold.
+        """
+        product = self.value * other.value
+        return Confidence(value=product, source=f"combined({self.source},{other.source})")
 
 
 # ---------------------------------------------------------------------------
 # Probabilistic value wrappers
 # ---------------------------------------------------------------------------
 
-@dataclass(slots=True)
+@dataclass
 class ChimeraValue:
     """Base for all ChimeraLang runtime values."""
     raw: Any
     confidence: Confidence
     memory_scope: MemoryScope = MemoryScope.EPHEMERAL
     trace: list[str] = field(default_factory=list)
-    _fingerprint: str = field(default="", init=False, repr=False)
-
-    def __post_init__(self) -> None:
-        self._fingerprint = self._compute_fingerprint()
 
     def _compute_fingerprint(self) -> str:
         data = f"{type(self.raw).__name__}:{self.raw}:{self.confidence.value}"
@@ -77,10 +77,11 @@ class ChimeraValue:
 
     @property
     def fingerprint(self) -> str:
-        return self._fingerprint
+        """Computed on demand so it stays accurate even if confidence mutates."""
+        return self._compute_fingerprint()
 
 
-@dataclass(slots=True)
+@dataclass
 class ConfidentValue(ChimeraValue):
     """Value with >= 0.95 confidence. Assertion fails on creation if below."""
     def __post_init__(self) -> None:
@@ -88,23 +89,22 @@ class ConfidentValue(ChimeraValue):
             raise ConfidenceViolation(
                 f"Confident<> requires confidence >= 0.95, got {self.confidence.value}"
             )
-        super().__post_init__()
 
 
-@dataclass(slots=True)
+@dataclass
 class ExploreValue(ChimeraValue):
     """Value in exploration space — hallucination explicitly allowed."""
     exploration_budget: float = 1.0
 
 
-@dataclass(slots=True)
+@dataclass
 class ConvergeValue(ChimeraValue):
     """Value requiring multi-branch consensus."""
     branch_values: list[ChimeraValue] = field(default_factory=list)
     consensus_method: str = "majority"
 
 
-@dataclass(slots=True)
+@dataclass
 class ProvisionalValue(ChimeraValue):
     """Revocable value — valid until contradicted."""
     revoked: bool = False
