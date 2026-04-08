@@ -257,7 +257,7 @@ class ChimeraVM:
             try:
                 total = sum(float(x) for x in items)
                 # Preserve int type when possible
-                result: int | float = int(total) if total == int(total) else total
+                result: int | float = int(total) if isinstance(total, float) and total.is_integer() else total
                 return self._wrap(result, confidence=args[0].confidence.value)
             except (TypeError, ValueError):
                 pass

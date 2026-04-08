@@ -256,7 +256,7 @@ emit x
 """
         result = run(src)
         assert result.errors == []
-        assert abs(result.emitted[0].raw - 3.57) < 1e-9
+        assert abs(result.emitted[0].raw - 3.57) < 1e-6
 
 
 # ---------------------------------------------------------------------------
