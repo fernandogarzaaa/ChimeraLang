@@ -32,6 +32,7 @@ class TokenKind(Enum):
     IN = auto()
     ASSERT = auto()
     EMIT = auto()
+    DETECT = auto()
 
     # Keywords — constraint
     MUST = auto()
@@ -106,6 +107,7 @@ class TokenKind(Enum):
     COLON = auto()
     DOT = auto()
     PIPE = auto()
+    UNDERSCORE = auto()   # _ wildcard for match
 
     # Special
     NEWLINE = auto()
@@ -149,6 +151,7 @@ KEYWORDS: dict[str, TokenKind] = {
     "in": TokenKind.IN,
     "assert": TokenKind.ASSERT,
     "emit": TokenKind.EMIT,
+    "detect": TokenKind.DETECT,
     "must": TokenKind.MUST,
     "allow": TokenKind.ALLOW,
     "forbidden": TokenKind.FORBIDDEN,

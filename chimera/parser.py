@@ -20,12 +20,15 @@ from chimera.ast_nodes import (
     FloatLiteral,
     FnDecl,
     ForbiddenConstraint,
+    ForStmt,
     GateDecl,
     GoalDecl,
     Identifier,
     IfExpr,
     IntLiteral,
     ListLiteral,
+    MatchArm,
+    MatchExpr,
     MemberExpr,
     MemoryType,
     MustConstraint,
@@ -339,6 +342,12 @@ class Parser:
             return self._parse_emit()
         if self._check(TokenKind.IF):
             return ExprStmt(expr=self._parse_if_expr())
+        if self._check(TokenKind.FOR):
+            return self._parse_for()
+        if self._check(TokenKind.MATCH):
+            return ExprStmt(expr=self._parse_match_expr())
+        if self._check(TokenKind.DETECT):
+            return self._parse_detect()
         expr = self._parse_expr()
         self._expect_line_end()
         return ExprStmt(expr=expr)
@@ -397,8 +406,97 @@ class Parser:
         return items
 
     # ------------------------------------------------------------------
-    # Expressions — precedence climbing
+    # For loop
     # ------------------------------------------------------------------
+
+    def _parse_for(self) -> ForStmt:
+        """Parse: for <ident> in <expr> NEWLINE body end"""
+        self._expect(TokenKind.FOR)
+        target = self._expect(TokenKind.IDENT, "Expected loop variable name").value
+        self._expect(TokenKind.IN, "Expected 'in' after loop variable")
+        iterable = self._parse_expr()
+        self._expect_line_end()
+        body: list[Statement] = []
+        while not self._check(TokenKind.END) and not self._check(TokenKind.EOF):
+            self._skip_newlines()
+            if self._check(TokenKind.END):
+                break
+            body.append(self._parse_statement())
+            self._skip_newlines()
+        self._expect(TokenKind.END, "Expected 'end' to close for loop")
+        self._expect_line_end()
+        return ForStmt(target=target, iterable=iterable, body=body)
+
+    # ------------------------------------------------------------------
+    # Match expression
+    # ------------------------------------------------------------------
+
+    def _parse_match_expr(self) -> MatchExpr:
+        """Parse: match <expr> NEWLINE (| <pattern> => body)* end"""
+        self._expect(TokenKind.MATCH)
+        subject = self._parse_expr()
+        self._expect_line_end()
+        arms: list[MatchArm] = []
+        while not self._check(TokenKind.END) and not self._check(TokenKind.EOF):
+            self._skip_newlines()
+            if self._check(TokenKind.END):
+                break
+            self._expect(TokenKind.PIPE, "Expected '|' to start a match arm")
+            # Wildcard arm: _
+            if self._check(TokenKind.UNDERSCORE):
+                self._advance()
+                pattern: Expr | None = None
+            else:
+                pattern = self._parse_expr()
+            self._expect(TokenKind.FAT_ARROW, "Expected '=>' after match pattern")
+            self._skip_newlines()
+            arm_body: list[Statement] = []
+            # Arm body: statements until the next '|', 'end', or EOF
+            while (
+                not self._check(TokenKind.PIPE)
+                and not self._check(TokenKind.END)
+                and not self._check(TokenKind.EOF)
+            ):
+                self._skip_newlines()
+                if self._check(TokenKind.PIPE) or self._check(TokenKind.END):
+                    break
+                arm_body.append(self._parse_statement())
+                self._skip_newlines()
+            arms.append(MatchArm(pattern=pattern, body=arm_body))
+        self._expect(TokenKind.END, "Expected 'end' to close match")
+        self._expect_line_end()
+        return MatchExpr(subject=subject, arms=arms)
+
+    # ------------------------------------------------------------------
+    # Detect statement
+    # ------------------------------------------------------------------
+
+    def _parse_detect(self) -> ExprStmt:
+        """Parse: detect <ident> NEWLINE key: value ... end
+        Translates to a call: __detect__(<name>, key=value, ...)"""
+        self._expect(TokenKind.DETECT)
+        # The thing being detected — typically an identifier like 'hallucination'
+        name_tok = self._advance()
+        detect_name = name_tok.value
+        self._expect_line_end()
+        args: list[Expr] = [StringLiteral(value=detect_name)]
+        while not self._check(TokenKind.END) and not self._check(TokenKind.EOF):
+            self._skip_newlines()
+            if self._check(TokenKind.END):
+                break
+            # key: value pairs
+            key_tok = self._advance()
+            self._expect(TokenKind.COLON, "Expected ':' in detect block")
+            val_expr = self._parse_expr()
+            self._expect_line_end()
+            args.append(StringLiteral(value=key_tok.value))
+            args.append(val_expr)
+        self._expect(TokenKind.END, "Expected 'end' to close detect block")
+        self._expect_line_end()
+        callee = Identifier(name="__detect__")
+        return ExprStmt(expr=CallExpr(callee=callee, args=args))
+
+
 
     def _parse_expr(self) -> Expr:
         return self._parse_or()
@@ -527,10 +625,13 @@ class Parser:
         if tok.kind == TokenKind.IF:
             return self._parse_if_expr()
 
+        if tok.kind == TokenKind.MATCH:
+            return self._parse_match_expr()
+
         # Allow type-constructor-like calls: Confident(...), Explore(...)
         if tok.kind in (TokenKind.CONFIDENT, TokenKind.EXPLORE_TYPE, TokenKind.CONVERGE,
                         TokenKind.PROVISIONAL, TokenKind.EPHEMERAL, TokenKind.PERSISTENT,
-                        TokenKind.ABOUT):
+                        TokenKind.ABOUT, TokenKind.EXPLORE):
             self._advance()
             return Identifier(name=tok.value)
 

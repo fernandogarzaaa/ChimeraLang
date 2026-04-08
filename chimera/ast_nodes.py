@@ -172,6 +172,28 @@ class EmitStmt(Statement):
     value: Expr
 
 
+@dataclass
+class ForStmt(Statement):
+    """for x in collection ... end"""
+    target: str
+    iterable: Expr
+    body: list[Statement]
+
+
+@dataclass
+class MatchArm(ASTNode):
+    """One arm of a match expression: | pattern => body"""
+    pattern: Expr | None  # None = wildcard (_)
+    body: list[Statement]
+
+
+@dataclass
+class MatchExpr(Expr):
+    """match subject | p1 => ... | p2 => ... end"""
+    subject: Expr
+    arms: list[MatchArm]
+
+
 # ---------------------------------------------------------------------------
 # Constraint Blocks (inside fn / gate / goal / reason)
 # ---------------------------------------------------------------------------

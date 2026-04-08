@@ -29,12 +29,15 @@ from chimera.ast_nodes import (
     FloatLiteral,
     FnDecl,
     ForbiddenConstraint,
+    ForStmt,
     GateDecl,
     GoalDecl,
     Identifier,
     IfExpr,
     IntLiteral,
     ListLiteral,
+    MatchArm,
+    MatchExpr,
     MemberExpr,
     MustConstraint,
     Program,
@@ -163,16 +166,58 @@ class ChimeraVM:
         # confidence-checking functions
         self._builtins: dict[str, Callable[..., ChimeraValue]] = {
             "confident": self._builtin_confident,
+            "explore": self._builtin_explore_fn,
             "consensus": self._builtin_consensus,
             "no_hallucination": self._builtin_no_hallucination,
             "confidence_of": self._builtin_confidence_of,
             "print": self._builtin_print,
+            # Collection utilities
+            "len": self._builtin_len,
+            "sum": self._builtin_sum,
+            "max_val": self._builtin_max_val,
+            "min_val": self._builtin_min_val,
+            "abs_val": self._builtin_abs_val,
+            "floor": self._builtin_floor,
+            "ceil": self._builtin_ceil,
+            "round_val": self._builtin_round_val,
+            # Detect hook (wired to hallucination scan)
+            "__detect__": self._builtin_detect,
         }
 
     def _builtin_confident(self, *args: ChimeraValue) -> ChimeraValue:
+        """confident(value, score?) — check or construct a Confident value.
+
+        * 1 arg: bool — is value's confidence >= 0.95?
+        * 2 args: construct ConfidentValue(raw=args[0].raw, confidence=args[1].raw)
+        """
+        if len(args) >= 2:
+            raw = args[0].raw
+            score = float(args[1].raw) if args[1].raw is not None else 0.95
+            score = max(score, 0.95)
+            return ConfidentValue(
+                raw=raw,
+                confidence=Confidence(score, "confident_constructor"),
+                trace=[f"confident({raw}, {score})"],
+            )
         if args:
             return self._wrap(args[0].confidence.value >= 0.95)
         return self._wrap(True)
+
+    def _builtin_explore_fn(self, *args: ChimeraValue) -> ChimeraValue:
+        """explore(value, score?) — construct an ExploreValue.
+
+        * 1 arg: ExploreValue with confidence 0.5
+        * 2 args: ExploreValue with confidence = args[1].raw
+        """
+        raw = args[0].raw if args else None
+        score = float(args[1].raw) if len(args) >= 2 and args[1].raw is not None else 0.5
+        score = min(max(score, 0.0), 1.0)
+        return ExploreValue(
+            raw=raw,
+            confidence=Confidence(score, "explore_fn"),
+            trace=[f"explore({raw}, {score})"],
+            exploration_budget=1.0,
+        )
 
     def _builtin_consensus(self, *args: ChimeraValue) -> ChimeraValue:
         if args and isinstance(args[0], ConvergeValue):
@@ -197,9 +242,150 @@ class ChimeraVM:
         self._trace(f"[print] {text}")
         return self._wrap(None)
 
-    # ------------------------------------------------------------------
-    # Declaration execution
-    # ------------------------------------------------------------------
+    def _builtin_len(self, *args: ChimeraValue) -> ChimeraValue:
+        """len(collection) — length of a list or text string."""
+        if args:
+            raw = args[0].raw
+            if isinstance(raw, (list, str)):
+                return self._wrap(len(raw), confidence=args[0].confidence.value)
+        return self._wrap(0)
+
+    def _builtin_sum(self, *args: ChimeraValue) -> ChimeraValue:
+        """sum(list) — sum all numeric elements."""
+        if args and isinstance(args[0].raw, list):
+            items = args[0].raw
+            try:
+                total = sum(float(x) for x in items)
+                # Preserve int type when possible
+                result: int | float = int(total) if isinstance(total, float) and total.is_integer() else total
+                return self._wrap(result, confidence=args[0].confidence.value)
+            except (TypeError, ValueError):
+                pass
+        return self._wrap(0)
+
+    def _builtin_max_val(self, *args: ChimeraValue) -> ChimeraValue:
+        """max_val(list) — maximum element of a numeric list."""
+        if args and isinstance(args[0].raw, list) and args[0].raw:
+            try:
+                return self._wrap(max(args[0].raw), confidence=args[0].confidence.value)
+            except TypeError:
+                pass
+        return self._wrap(None)
+
+    def _builtin_min_val(self, *args: ChimeraValue) -> ChimeraValue:
+        """min_val(list) — minimum element of a numeric list."""
+        if args and isinstance(args[0].raw, list) and args[0].raw:
+            try:
+                return self._wrap(min(args[0].raw), confidence=args[0].confidence.value)
+            except TypeError:
+                pass
+        return self._wrap(None)
+
+    def _builtin_abs_val(self, *args: ChimeraValue) -> ChimeraValue:
+        """abs_val(x) — absolute value."""
+        if args and args[0].raw is not None:
+            try:
+                return self._wrap(abs(args[0].raw), confidence=args[0].confidence.value)
+            except TypeError:
+                pass
+        return self._wrap(None)
+
+    def _builtin_floor(self, *args: ChimeraValue) -> ChimeraValue:
+        """floor(x) — floor of a float."""
+        import math
+        if args and args[0].raw is not None:
+            try:
+                return self._wrap(math.floor(float(args[0].raw)), confidence=args[0].confidence.value)
+            except (TypeError, ValueError):
+                pass
+        return self._wrap(None)
+
+    def _builtin_ceil(self, *args: ChimeraValue) -> ChimeraValue:
+        """ceil(x) — ceiling of a float."""
+        import math
+        if args and args[0].raw is not None:
+            try:
+                return self._wrap(math.ceil(float(args[0].raw)), confidence=args[0].confidence.value)
+            except (TypeError, ValueError):
+                pass
+        return self._wrap(None)
+
+    def _builtin_round_val(self, *args: ChimeraValue) -> ChimeraValue:
+        """round_val(x, ndigits?) — round to nearest integer or n decimal places."""
+        if args and args[0].raw is not None:
+            try:
+                ndigits = int(args[1].raw) if len(args) >= 2 and args[1].raw is not None else None
+                return self._wrap(round(float(args[0].raw), ndigits), confidence=args[0].confidence.value)
+            except (TypeError, ValueError):
+                pass
+        return self._wrap(None)
+
+    def _builtin_detect(self, *args: ChimeraValue) -> ChimeraValue:
+        """__detect__(name, key, val, ...) — inline hallucination detection probe.
+
+        Logs the detection config to the trace and returns a bool indicating
+        whether the probe passed (no hallucination detected for the target value).
+        """
+        detect_name = args[0].raw if args else "unknown"
+        pairs: dict[str, Any] = {}
+        i = 1
+        while i + 1 < len(args):
+            pairs[str(args[i].raw)] = args[i + 1].raw
+            i += 2
+
+        strategy = pairs.get("strategy", "range")
+        action = pairs.get("action", "flag")
+        # 'on' holds the *evaluated* target value (not a name) since the parser
+        # evaluates the expression on the right side of the colon.
+        target_raw = pairs.get("on")
+
+        self._trace(
+            f"[detect:{detect_name}] strategy={strategy} value={target_raw!r} action={action}"
+        )
+
+        passed = True
+
+        if strategy == "range" and target_raw is not None:
+            valid_range = pairs.get("valid_range")
+            if isinstance(valid_range, list) and len(valid_range) == 2:
+                lo, hi = float(valid_range[0]), float(valid_range[1])
+                try:
+                    passed = lo <= float(target_raw) <= hi
+                except (TypeError, ValueError):
+                    passed = False
+                if not passed:
+                    self._trace(
+                        f"[detect:{detect_name}] FLAGGED — value={target_raw} "
+                        f"outside [{lo}, {hi}]"
+                    )
+
+        elif strategy == "dictionary" and target_raw is not None:
+            allowed = pairs.get("allowed_values", [])
+            if isinstance(allowed, list):
+                passed = target_raw in allowed
+                if not passed:
+                    self._trace(
+                        f"[detect:{detect_name}] FLAGGED — value={target_raw!r} "
+                        f"not in allowed dictionary"
+                    )
+
+        elif strategy == "confidence_threshold":
+            threshold = float(pairs.get("threshold", 0.5))
+            # target_raw should be a confidence float in [0, 1]
+            if target_raw is not None:
+                try:
+                    passed = float(target_raw) >= threshold
+                except (TypeError, ValueError):
+                    passed = False
+                if not passed:
+                    self._trace(
+                        f"[detect:{detect_name}] FLAGGED — confidence {target_raw:.3f} "
+                        f"below threshold {threshold}"
+                    )
+
+        return self._wrap(passed, confidence=1.0)
+
+
 
     def _exec_decl(self, node: Declaration | Statement) -> None:
         if isinstance(node, ValDecl):
@@ -227,6 +413,8 @@ class ChimeraVM:
             val = self._eval(stmt.value)
             self._result.emitted.append(val)
             self._trace(f"[emit] {val.raw} (confidence={val.confidence.value:.2f})")
+        elif isinstance(stmt, ForStmt):
+            self._exec_for(stmt)
         elif isinstance(stmt, ExprStmt):
             self._eval(stmt.expr)
 
@@ -249,6 +437,33 @@ class ChimeraVM:
                 f"Assertion failed (confidence={val.confidence.value:.2f})",
                 trace=val.trace,
             )
+
+    def _exec_for(self, stmt: ForStmt) -> None:
+        """Execute a for-in loop over a list or string."""
+        iterable_val = self._eval(stmt.iterable)
+        raw = iterable_val.raw
+        if not isinstance(raw, (list, str)):
+            self._trace(f"[for] Cannot iterate over {type(raw).__name__}")
+            return
+        items = list(raw) if isinstance(raw, str) else raw
+        self._trace(f"[for] iterating {len(items)} item(s) over '{stmt.target}'")
+        for item in items:
+            scope = self._env.child()
+            scope.set(stmt.target, ChimeraValue(
+                raw=item,
+                confidence=iterable_val.confidence,
+                trace=[f"loop_var:{stmt.target}"],
+            ))
+            old_env = self._env
+            self._env = scope
+            try:
+                for s in stmt.body:
+                    self._exec_stmt(s)
+            except ReturnSignal:
+                self._env = old_env
+                raise
+            finally:
+                self._env = old_env
 
     # ------------------------------------------------------------------
     # Expression evaluation
@@ -289,6 +504,9 @@ class ChimeraVM:
 
         if isinstance(expr, IfExpr):
             return self._eval_if(expr)
+
+        if isinstance(expr, MatchExpr):
+            return self._eval_match(expr)
 
         return self._wrap(None)
 
@@ -432,6 +650,38 @@ class ChimeraVM:
             raise
         finally:
             self._env = old_env
+        return self._wrap(None)
+
+    def _eval_match(self, expr: MatchExpr) -> ChimeraValue:
+        """Evaluate a match expression: compare subject against each arm's pattern."""
+        subject = self._eval(expr.subject)
+        self._trace(f"[match] subject={subject.raw!r}")
+        for arm in expr.arms:
+            matched = False
+            if arm.pattern is None:
+                # Wildcard arm — always matches
+                matched = True
+            else:
+                pattern_val = self._eval(arm.pattern)
+                matched = subject.raw == pattern_val.raw
+
+            if matched:
+                self._trace(f"[match] arm matched pattern={arm.pattern!r}")
+                scope = self._env.child()
+                old_env = self._env
+                self._env = scope
+                result = self._wrap(None)
+                try:
+                    for s in arm.body:
+                        self._exec_stmt(s)
+                except ReturnSignal as sig:
+                    result = sig.value
+                    self._env = old_env
+                    raise
+                finally:
+                    self._env = old_env
+                return result
+        self._trace("[match] no arm matched")
         return self._wrap(None)
 
     # ------------------------------------------------------------------

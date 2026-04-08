@@ -12,10 +12,13 @@ ChimeraLang treats uncertainty, confidence, and epistemic state as **first-class
 |---|---|
 | **Probabilistic Types** | `Confident<T>`, `Explore<T>`, `Converge<T>`, `Provisional<T>` — types that carry confidence scores |
 | **Quantum Consensus Gates** | Multiple candidate values vote under Gaussian noise; the result is the *consensus* of an ensemble |
-| **Hallucination Detection** | 5 built-in strategies: range, dictionary, semantic, cross-reference, temporal |
+| **Hallucination Detection** | Inline `detect` blocks with `range`, `dictionary`, and `confidence_threshold` strategies |
 | **Cryptographic Integrity** | Merkle-chain proofs and gate certificates ensure reasoning traces are tamper-evident |
 | **Memory Modifiers** | `Ephemeral`, `Persistent`, `Provisional` — explicit lifecycle for every binding |
 | **Intent-First Goals** | `goal` blocks declare desired outcomes; `reasoning` blocks show the derivation |
+| **Control Flow** | `for x in list`, `match expr | pattern => body`, `if/else` |
+| **Built-in Functions** | `len`, `sum`, `max_val`, `min_val`, `abs_val`, `floor`, `ceil`, `round_val`, `confident`, `explore`, `confidence_of` |
+| **Interactive REPL** | `chimera repl` — try the language live in your terminal |
 
 ## Quick Start
 
@@ -38,11 +41,12 @@ python -m chimera.cli check  <file>   # Type-check without running
 python -m chimera.cli prove  <file>   # Run and generate integrity proof
 python -m chimera.cli ast    <file>   # Print the AST
 python -m chimera.cli tokens <file>   # Print the token stream
+python -m chimera.cli repl           # Interactive REPL
 ```
 
 ## Examples
 
-Four example programs are included in [`examples/`](examples/):
+Six example programs are included in [`examples/`](examples/):
 
 | File | What it demonstrates |
 |---|---|
@@ -50,19 +54,24 @@ Four example programs are included in [`examples/`](examples/):
 | `quantum_reasoning.chimera` | Consensus gates with Gaussian noise, confidence propagation |
 | `goal_driven.chimera` | Goals, reasoning blocks, semantic constraints |
 | `hallucination_guard.chimera` | All 5 hallucination-detection strategies |
+| `for_loop.chimera` | For loops, list builtins, match expressions, two-arg constructors |
+| `advanced_reasoning.chimera` | Detect blocks, nested gates + reason, aggregate confidence |
 
 ### Sample run
 
 ```
-$ python -m chimera.cli run examples/quantum_reasoning.chimera
+$ python -m chimera.cli run examples/for_loop.chimera
 
-=== ChimeraLang Quantum Consensus VM ===
-[gate:ensemble_gate] Candidate values: [42, 43, 41]
-[gate:ensemble_gate] Noisy values:     [42.03, 42.98, 41.05]
-[gate:ensemble_gate] Strategy: median → collapsed to 42.03
- >> ensemble_answer = 42.03 (confidence: 0.9500)
- >> high_confidence = true (confidence: 0.9800)
-Verdict: PASS (confidence 0.95 ≥ 0.50)
+  emit: 4.08  [confidence=1.00]
+  emit: 5  [confidence=1.00]
+  emit: high  [confidence=1.00]
+  emit: medium  [confidence=1.00]
+  ...
+  emit: running  [confidence=1.00]
+  emit: 3.14159  [confidence=0.99]
+  emit: dark energy is repulsive  [confidence=0.65]
+
+chimera: examples/for_loop.chimera — executed in 0.2ms (assertions: 1 passed, 0 failed)
 ```
 
 ## Project Structure
@@ -70,22 +79,22 @@ Verdict: PASS (confidence 0.95 ≥ 0.50)
 ```
 ChimeraLang/
 ├── chimera/                  # Core language implementation
-│   ├── tokens.py             # 70+ token types
+│   ├── tokens.py             # 75+ token types
 │   ├── lexer.py              # Tokenizer
 │   ├── ast_nodes.py          # AST node hierarchy
 │   ├── parser.py             # Recursive-descent parser
 │   ├── types.py              # Runtime type system & confidence propagation
 │   ├── type_checker.py       # Static type checker
 │   ├── vm.py                 # Quantum Consensus VM
-│   ├── detect.py             # Hallucination detector (5 strategies)
+│   ├── detect.py             # Hallucination detector
 │   ├── integrity.py          # Merkle chains & gate certificates
-│   └── cli.py                # Command-line interface
+│   └── cli.py                # Command-line interface + REPL
 ├── examples/                 # Example .chimera programs
 ├── spec/
 │   └── SPEC.md               # Formal language specification
 ├── paper/
 │   └── chimeralang.tex       # ArXiv whitepaper (LaTeX)
-├── tests/                    # Test suite (planned)
+├── tests/                    # Test suite (60 tests)
 └── pyproject.toml
 ```
 
@@ -103,28 +112,76 @@ Every value carries a **confidence score** (0.0–1.0). Confidence propagates th
 ### Quantum Consensus Gates
 
 ```chimera
-gate ensemble_gate(strategy: "median", threshold: 0.80) {
-    candidate a = 42
-    candidate b = 43
-    candidate c = 41
-}
-val result = consensus(ensemble_gate)
+gate consensus_answer(question: Text) -> Converge<Text>
+  branches: 5
+  collapse: weighted_vote
+  threshold: 0.80
+  val answer: Text = "Reasoned answer to: " + question
+  return answer
+end
+val result = consensus_answer("What causes consciousness?")
 ```
 
-Candidates are perturbed with Gaussian noise, then collapsed via `mean`, `median`, or `majority_vote`. The gate only passes if collective confidence meets the threshold.
+Candidates are perturbed with Gaussian noise, then collapsed via `majority`, `weighted_vote`, or `highest_confidence`. The gate only passes if collective confidence meets the threshold.
 
-### Hallucination Detection
+### For Loops
 
 ```chimera
-detect hallucination {
-    strategy: "range"
-    on input: temperature
-    valid_range: [-50.0, 60.0]
-    action: "flag"
-}
+val scores: List<Float> = [0.92, 0.76, 0.88, 0.55, 0.97]
+for s in scores
+  emit s
+end
 ```
 
-Five built-in strategies: `range`, `dictionary`, `semantic`, `cross_reference`, and `temporal`.
+Iterate over any `List<T>` or `Text` (character by character).
+
+### Match Expressions
+
+```chimera
+val status: Int = 2
+match status
+  | 1 => emit "initialising"
+  | 2 => emit "running"
+  | 3 => emit "done"
+  | _ => emit "unknown"
+end
+```
+
+Pattern-match against literals; `_` is the wildcard arm.
+
+### Hallucination Detection Blocks
+
+```chimera
+val temperature: Float = 37.2
+
+detect hallucination
+  strategy: "range"
+  on: temperature
+  valid_range: [-50.0, 60.0]
+  action: "flag"
+end
+```
+
+Inline `detect` blocks record probes to the reasoning trace; out-of-range values are automatically flagged.
+
+### Built-in Functions
+
+| Function | Description |
+|---|---|
+| `confident(val, score)` | Construct a `ConfidentValue` with the given score |
+| `explore(val, score)` | Construct an `ExploreValue` with the given score |
+| `confidence_of(val)` | Extract the confidence float from any value |
+| `consensus(val)` | True if a `ConvergeValue` reached multi-branch consensus |
+| `no_hallucination(val)` | True if value has trace and confidence > 0.5 |
+| `len(collection)` | Length of a list or string |
+| `sum(list)` | Sum of a numeric list |
+| `max_val(list)` | Maximum element |
+| `min_val(list)` | Minimum element |
+| `abs_val(x)` | Absolute value |
+| `floor(x)` | Floor of a float |
+| `ceil(x)` | Ceiling of a float |
+| `round_val(x, n?)` | Round to n decimal places |
+| `print(...)` | Log to reasoning trace |
 
 ### Integrity Proofs
 
@@ -133,6 +190,21 @@ python -m chimera.cli prove examples/quantum_reasoning.chimera
 ```
 
 Generates a Merkle-chain proof with SHA-256 hashes so that every step of the reasoning trace is tamper-evident.
+
+### Interactive REPL
+
+```bash
+python -m chimera.cli repl
+```
+
+```
+ChimeraLang REPL v0.2.0  (type ':exit' or Ctrl-D to quit, ':help' for help)
+
+chimera> val x = confident(42, 0.98)
+chimera> emit x
+  >> 42  [confidence=0.9800]
+chimera> :exit
+```
 
 ## Academic Paper
 
@@ -155,6 +227,7 @@ pdflatex chimeralang.tex
 | Correctness | Tests/assertions | Continuous hallucination detection |
 | Auditability | Logs | Cryptographic Merkle proofs |
 | Intent | Implicit in code | Explicit `goal` declarations |
+| Control flow | Loops, conditionals | `for`, `match`, `if/else` with confidence propagation |
 
 ## License
 

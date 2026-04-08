@@ -21,6 +21,7 @@ from chimera.ast_nodes import (
     ExprStmt,
     FloatLiteral,
     FnDecl,
+    ForStmt,
     GateDecl,
     GenericType,
     GoalDecl,
@@ -28,6 +29,7 @@ from chimera.ast_nodes import (
     IfExpr,
     IntLiteral,
     ListLiteral,
+    MatchExpr,
     MemberExpr,
     MemoryType,
     NamedType,
@@ -193,8 +195,20 @@ class TypeChecker:
             self._infer_expr(stmt.condition)
         elif isinstance(stmt, EmitStmt):
             self._infer_expr(stmt.value)
+        elif isinstance(stmt, ForStmt):
+            self._check_for(stmt)
         elif isinstance(stmt, ExprStmt):
             self._infer_expr(stmt.expr)
+
+    def _check_for(self, stmt: ForStmt) -> None:
+        self._infer_expr(stmt.iterable)
+        scope = self._env.child()
+        scope.define(stmt.target, VOID_T)
+        old_env = self._env
+        self._env = scope
+        for s in stmt.body:
+            self._check_stmt(s)
+        self._env = old_env
 
     # ------------------------------------------------------------------
     # Expression type inference
@@ -230,6 +244,14 @@ class TypeChecker:
                 self._check_stmt(s)
             if expr.else_body:
                 for s in expr.else_body:
+                    self._check_stmt(s)
+            return VOID_T
+        if isinstance(expr, MatchExpr):
+            self._infer_expr(expr.subject)
+            for arm in expr.arms:
+                if arm.pattern is not None:
+                    self._infer_expr(arm.pattern)
+                for s in arm.body:
                     self._check_stmt(s)
             return VOID_T
         if isinstance(expr, ListLiteral):
