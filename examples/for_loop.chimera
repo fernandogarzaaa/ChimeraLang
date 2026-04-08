@@ -1,0 +1,49 @@
+// for_loop.chimera
+// Demonstrates for-in loops, list builtins, and match expressions.
+
+// ── 1. Basic for loop over a list ──────────────────────────────────────────
+
+val scores: List<Float> = [0.92, 0.76, 0.88, 0.55, 0.97]
+
+val total: Float = sum(scores)
+val count: Int = len(scores)
+emit total
+emit count
+
+// ── 2. For loop with per-item processing ───────────────────────────────────
+
+fn classify(score: Float) -> Text
+  if score > 0.9
+    return "high"
+  end
+  if score > 0.7
+    return "medium"
+  end
+  return "low"
+end
+
+for s in scores
+  val label: Text = classify(s)
+  emit label
+end
+
+// ── 3. Match expression ─────────────────────────────────────────────────────
+
+val status: Int = 2
+
+match status
+  | 1 => emit "initialising"
+  | 2 => emit "running"
+  | 3 => emit "done"
+  | _ => emit "unknown"
+end
+
+// ── 4. Two-argument confident() and explore() constructors ─────────────────
+
+val answer: Confident<Float> = confident(3.14159, 0.99)
+val hypothesis: Explore<Text> = explore("dark energy is repulsive", 0.65)
+
+emit answer
+emit hypothesis
+
+assert confident(answer)

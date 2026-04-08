@@ -162,7 +162,80 @@ def cmd_prove(path: str) -> None:
     print("═══════════════════════════════════════════════")
 
 
-def _print_node(node: object, indent: int) -> None:
+def cmd_repl() -> None:
+    """Interactive Read-Eval-Print Loop for ChimeraLang."""
+    import readline  # noqa: F401 — enables history & arrow keys on most platforms
+
+    print("ChimeraLang REPL v0.2.0  (type ':exit' or Ctrl-D to quit, ':help' for help)")
+    print()
+
+    vm = ChimeraVM()
+    # Persistent environment across REPL lines
+    accumulated: list[str] = []
+    indent_keywords = {"fn", "gate", "goal", "reason", "if", "for", "match", "detect"}
+    dedent_keyword = "end"
+    depth = 0
+
+    def _eval_buffer(lines: list[str]) -> None:
+        source = "\n".join(lines)
+        try:
+            tokens = _lex(source)
+            program = Parser(tokens).parse()
+        except (LexError, ParseError) as e:
+            print(f"  parse error: {e}")
+            return
+        result = vm.execute(program)
+        for val in result.emitted:
+            conf_str = f"{val.confidence.value:.4f}"
+            print(f"  >> {val.raw!r}  [confidence={conf_str}]")
+        for err in result.errors:
+            print(f"  error: {err}")
+
+    while True:
+        prompt = "chimera" + ("..." * depth) + "> "
+        try:
+            line = input(prompt)
+        except (EOFError, KeyboardInterrupt):
+            print()
+            break
+
+        stripped = line.strip()
+
+        if stripped == ":exit":
+            break
+        if stripped == ":help":
+            print("  :exit         Quit the REPL")
+            print("  :clear        Reset REPL state")
+            print("  :trace        Toggle reasoning trace output")
+            print("  :help         Show this message")
+            print("  Any .chimera code is accepted; multi-line blocks use 'end'")
+            continue
+        if stripped == ":clear":
+            vm = ChimeraVM()
+            accumulated = []
+            depth = 0
+            print("  [REPL state cleared]")
+            continue
+        if stripped == ":trace":
+            print("  [trace display not yet configurable in REPL — use 'chimera run --trace']")
+            continue
+
+        accumulated.append(line)
+
+        # Track block depth
+        first_word = stripped.split()[0] if stripped.split() else ""
+        if first_word in indent_keywords:
+            depth += 1
+        elif first_word == dedent_keyword:
+            depth = max(0, depth - 1)
+
+        # Execute when we're back at the top level
+        if depth == 0 and accumulated:
+            _eval_buffer(accumulated)
+            accumulated = []
+
+
+
     prefix = "  " * indent
     name = type(node).__name__
     print(f"{prefix}{name}", end="")
@@ -183,7 +256,7 @@ def _print_node(node: object, indent: int) -> None:
 # ---------------------------------------------------------------------------
 
 USAGE = """\
-ChimeraLang v0.1.0 — A programming language for AI cognition
+ChimeraLang v0.2.0 — A programming language for AI cognition
 
 Usage:
   chimera run   <file.chimera>   Execute a program
@@ -191,6 +264,7 @@ Usage:
   chimera lex   <file.chimera>   Dump token stream
   chimera parse <file.chimera>   Dump AST
   chimera prove <file.chimera>   Run + integrity report
+  chimera repl                   Interactive REPL
 
 Options:
   --trace   Show reasoning trace (with run)
@@ -205,6 +279,12 @@ def main() -> None:
         sys.exit(0)
 
     cmd = args[0]
+
+    # REPL doesn't need a file argument
+    if cmd == "repl":
+        cmd_repl()
+        return
+
     rest = args[1:]
     trace = "--trace" in rest
     positional = [a for a in rest if not a.startswith("--")]

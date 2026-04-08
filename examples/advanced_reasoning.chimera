@@ -1,0 +1,61 @@
+// advanced_reasoning.chimera
+// Demonstrates detect blocks, range validation, and nested gate + reason blocks.
+
+// ── 1. Detect hallucination with range check ───────────────────────────────
+
+val temperature: Float = 37.2
+
+detect hallucination
+  strategy: "range"
+  on: temperature
+  valid_range: [-50.0, 60.0]
+  action: "flag"
+end
+
+// ── 2. Reason block that selects a strategy via match ──────────────────────
+
+reason about(input: Text) -> Confident<Text>
+  given:
+    "domain knowledge base"
+    "verified corpus"
+  commit: highest_confidence
+
+  match len(input)
+    | 0 => return Confident("empty input")
+    | _ => return Confident("processed: " + input)
+  end
+end
+
+// ── 3. Gate with 5 branches resolving via weighted_vote ───────────────────
+
+gate verify_claim(claim: Text) -> Converge<Text>
+  branches: 5
+  collapse: weighted_vote
+  threshold: 0.75
+
+  val verdict: Text = "verified: " + claim
+  return verdict
+end
+
+// ── 4. Full pipeline ───────────────────────────────────────────────────────
+
+val claim: Text = "neural scaling laws hold beyond 10^24 FLOP"
+val verified: Converge<Text> = verify_claim(claim)
+val conclusion: Confident<Text> = about(claim)
+
+emit verified
+emit conclusion
+
+// ── 5. Aggregate confidence using builtins ─────────────────────────────────
+
+val readings: List<Float> = [0.91, 0.87, 0.94, 0.78, 0.96]
+val high_mark: Float = max_val(readings)
+val low_mark:  Float = min_val(readings)
+val avg_mark:  Float = sum(readings) / len(readings)
+
+emit high_mark
+emit low_mark
+emit avg_mark
+
+assert consensus(verified)
+assert confident(conclusion)

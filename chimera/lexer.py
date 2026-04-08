@@ -157,6 +157,10 @@ class Lexer:
         while not self._at_end() and (self._peek().isalnum() or self._peek() == "_"):
             self._advance()
         text = self._src[start : self._pos]
+        # Bare underscore is a wildcard, not an identifier
+        if text == "_":
+            self._emit(TokenKind.UNDERSCORE, text, 1)
+            return
         kind = KEYWORDS.get(text, TokenKind.IDENT)
         self._emit(kind, text, len(text))
 
