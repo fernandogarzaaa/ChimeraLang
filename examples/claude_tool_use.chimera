@@ -1,0 +1,8 @@
+# ChimeraLang ClaudeConstraintMiddleware pipeline demo
+# This .chimera file demonstrates tool use with constraint middleware
+
+tool web_search(query: str) -> str
+
+main:
+    let result = web_search("latest quantum computing research")
+    print(result)

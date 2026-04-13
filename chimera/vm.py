@@ -164,25 +164,36 @@ class ChimeraVM:
 
     def _register_builtins(self) -> None:
         # confidence-checking functions
-        self._builtins: dict[str, Callable[..., ChimeraValue]] = {
-            "confident": self._builtin_confident,
-            "explore": self._builtin_explore_fn,
-            "consensus": self._builtin_consensus,
-            "no_hallucination": self._builtin_no_hallucination,
-            "confidence_of": self._builtin_confidence_of,
-            "print": self._builtin_print,
-            # Collection utilities
-            "len": self._builtin_len,
-            "sum": self._builtin_sum,
-            "max_val": self._builtin_max_val,
-            "min_val": self._builtin_min_val,
-            "abs_val": self._builtin_abs_val,
-            "floor": self._builtin_floor,
-            "ceil": self._builtin_ceil,
-            "round_val": self._builtin_round_val,
-            # Detect hook (wired to hallucination scan)
-            "__detect__": self._builtin_detect,
-        }
+            self._builtins: dict[str, Callable[..., ChimeraValue]] = {
+                "confident": self._builtin_confident,
+                "explore": self._builtin_explore_fn,
+                "consensus": self._builtin_consensus,
+                "no_hallucination": self._builtin_no_hallucination,
+                "confidence_of": self._builtin_confidence_of,
+                "print": self._builtin_print,
+                # Collection utilities
+                "len": self._builtin_len,
+                "sum": self._builtin_sum,
+                "max_val": self._builtin_max_val,
+                "min_val": self._builtin_min_val,
+                "abs_val": self._builtin_abs_val,
+                "floor": self._builtin_floor,
+                "ceil": self._builtin_ceil,
+                "round_val": self._builtin_round_val,
+                # Detect hook (wired to hallucination scan)
+                "__detect__": self._builtin_detect,
+            }
+            # FIX (Bug 1): When called as constructor with 2 args, enforce that
+            # score >= 0.95. Raise ConfidenceViolation instead of silently clamping.
+            # * 1 arg: bool — is value's confidence >= 0.95?
+            # * 2 args: construct ConfidentValue(raw, score) — ERRORS if score < 0.95
+            #     score = float(args[1].raw) if args[1].raw is not None else 0.0
+            #     # FIX: raise instead of silently clamping
+            #     if score < 0.95:
+            #         raise ConfidenceViolation(
+            #             f"confident() requires score >= 0.95, got {score:.3f}. "
+            #             f"Use explore() for values below the confidence threshold."
+            #         )
 
     def _builtin_confident(self, *args: ChimeraValue) -> ChimeraValue:
         """confident(value, score?) — check or construct a Confident value.
@@ -218,6 +229,16 @@ class ChimeraVM:
             trace=[f"explore({raw}, {score})"],
             exploration_budget=1.0,
         )
+            # FIX (Bug 6): consensus requires actual divergence across branches,
+            # not just that branches exist. Check that branch values differ.
+            cv = args[0]
+            if len(cv.branch_values) >= 2:
+                raw_vals = [str(b.raw) for b in cv.branch_values]
+                unique_vals = set(raw_vals)
+                if len(unique_vals) == 1:
+                    # All branches identical — this is trivial consensus, not real agreement
+                    self._trace(
+                        "[consensus] WARNING: all branches returned identical values — "
 
     def _builtin_consensus(self, *args: ChimeraValue) -> ChimeraValue:
         if args and isinstance(args[0], ConvergeValue):
