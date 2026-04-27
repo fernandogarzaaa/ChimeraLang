@@ -286,3 +286,48 @@ class ReasonDecl(Declaration):
 @dataclass
 class Program(ASTNode):
     declarations: list[Declaration | Statement] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# CIR / Belief constructs (additive — existing nodes unchanged)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class InquireExpr(ASTNode):
+    prompt: str = ""
+    agents: list[str] = field(default_factory=list)
+    ttl: float | None = None
+
+
+@dataclass
+class BeliefDecl(Statement):
+    name: str = ""
+    type_ann: TypeExpr | None = None
+    inquire_expr: "InquireExpr | None" = None
+
+
+@dataclass
+class ResolveStmt(Statement):
+    target: str = ""
+    threshold: float = 0.8
+    strategy: str = "dempster_shafer"
+
+
+@dataclass
+class GuardStmt(Statement):
+    target: str = ""
+    max_risk: float = 0.2
+    strategy: str = "both"
+
+
+@dataclass
+class EvolveStmt(Statement):
+    target: str = ""
+    condition: str = "stable"
+    max_iter: int = 3
+
+
+@dataclass
+class SymbolDecl(Declaration):
+    name: str = ""
+    body: list[Statement] = field(default_factory=list)
