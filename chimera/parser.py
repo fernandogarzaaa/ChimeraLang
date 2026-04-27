@@ -8,6 +8,7 @@ from __future__ import annotations
 from chimera.ast_nodes import (
     AllowConstraint,
     AssertStmt,
+    BeliefDecl,
     BinaryOp,
     BoolLiteral,
     CallExpr,
@@ -15,6 +16,7 @@ from chimera.ast_nodes import (
     Constraint,
     Declaration,
     EmitStmt,
+    EvolveStmt,
     Expr,
     ExprStmt,
     FloatLiteral,
@@ -23,8 +25,10 @@ from chimera.ast_nodes import (
     ForStmt,
     GateDecl,
     GoalDecl,
+    GuardStmt,
     Identifier,
     IfExpr,
+    InquireExpr,
     IntLiteral,
     ListLiteral,
     MatchArm,
@@ -38,9 +42,11 @@ from chimera.ast_nodes import (
     ProbabilisticType,
     Program,
     ReasonDecl,
+    ResolveStmt,
     ReturnStmt,
     Statement,
     StringLiteral,
+    SymbolDecl,
     TypeExpr,
     UnaryOp,
     ValDecl,
@@ -129,6 +135,16 @@ class Parser:
             return self._parse_reason()
         if kind == TokenKind.VAL:
             return self._parse_val()
+        if kind == TokenKind.BELIEF:
+            return self._parse_belief()
+        if kind == TokenKind.RESOLVE:
+            return self._parse_resolve()
+        if kind == TokenKind.GUARD:
+            return self._parse_guard()
+        if kind == TokenKind.EVOLVE:
+            return self._parse_evolve()
+        if kind == TokenKind.SYMBOL:
+            return self._parse_symbol_decl()
         return self._parse_statement()
 
     # ------------------------------------------------------------------
@@ -348,6 +364,12 @@ class Parser:
             return ExprStmt(expr=self._parse_match_expr())
         if self._check(TokenKind.DETECT):
             return self._parse_detect()
+        if self._check(TokenKind.RESOLVE):
+            return self._parse_resolve()
+        if self._check(TokenKind.GUARD):
+            return self._parse_guard()
+        if self._check(TokenKind.EVOLVE):
+            return self._parse_evolve()
         expr = self._parse_expr()
         self._expect_line_end()
         return ExprStmt(expr=expr)
@@ -496,7 +518,144 @@ class Parser:
         callee = Identifier(name="__detect__")
         return ExprStmt(expr=CallExpr(callee=callee, args=args))
 
+    # ------------------------------------------------------------------
+    # CIR / Belief constructs
+    # ------------------------------------------------------------------
 
+    def _parse_belief(self) -> BeliefDecl:
+        """belief <name> := inquire { prompt: "...", agents: [...], ttl: N }"""
+        span = self._expect(TokenKind.BELIEF).span
+        name = self._expect(TokenKind.IDENT, "Expected belief name").value
+        self._expect(TokenKind.WALRUS, "Expected ':=' after belief name")
+        inquire_expr = self._parse_inquire_expr()
+        self._expect_line_end()
+        return BeliefDecl(name=name, inquire_expr=inquire_expr, span=span)
+
+    def _parse_inquire_expr(self) -> InquireExpr:
+        """inquire { prompt: "...", agents: [...], ttl: N }"""
+        self._expect(TokenKind.INQUIRE, "Expected 'inquire'")
+        self._expect(TokenKind.LBRACE, "Expected '{' after 'inquire'")
+        self._skip_newlines()
+        prompt = ""
+        agents: list[str] = []
+        ttl: float | None = None
+        while not self._check(TokenKind.RBRACE) and not self._check(TokenKind.EOF):
+            self._skip_newlines()
+            if self._check(TokenKind.RBRACE):
+                break
+            key_tok = self._advance()
+            key = key_tok.value
+            self._expect(TokenKind.COLON, f"Expected ':' after '{key}'")
+            if key == "prompt":
+                prompt = self._expect(TokenKind.STRING_LIT, "Expected prompt string").value
+            elif key == "agents":
+                self._expect(TokenKind.LBRACKET, "Expected '[' for agents list")
+                while not self._check(TokenKind.RBRACKET) and not self._check(TokenKind.EOF):
+                    agents.append(self._advance().value)
+                    self._match(TokenKind.COMMA)
+                self._expect(TokenKind.RBRACKET, "Expected ']' after agents")
+            elif key == "ttl":
+                tok = self._advance()
+                ttl = float(tok.value)
+            self._match(TokenKind.COMMA)
+            self._skip_newlines()
+        self._expect(TokenKind.RBRACE, "Expected '}' to close inquire block")
+        return InquireExpr(prompt=prompt, agents=agents, ttl=ttl)
+
+    def _parse_resolve(self) -> ResolveStmt:
+        """resolve <name> with consensus { threshold: 0.8, strategy: dempster_shafer }"""
+        self._expect(TokenKind.RESOLVE)
+        target = self._expect(TokenKind.IDENT, "Expected belief name").value
+        self._expect(TokenKind.WITH, "Expected 'with' after belief name")
+        self._advance()  # consume 'consensus' identifier
+        threshold = 0.8
+        strategy = "dempster_shafer"
+        if self._check(TokenKind.LBRACE):
+            self._advance()
+            self._skip_newlines()
+            while not self._check(TokenKind.RBRACE) and not self._check(TokenKind.EOF):
+                self._skip_newlines()
+                if self._check(TokenKind.RBRACE):
+                    break
+                key = self._advance().value
+                self._expect(TokenKind.COLON)
+                if key == "threshold":
+                    threshold = float(self._advance().value)
+                elif key == "strategy":
+                    strategy = self._advance().value
+                self._match(TokenKind.COMMA)
+                self._skip_newlines()
+            self._expect(TokenKind.RBRACE, "Expected '}' to close resolve block")
+        self._expect_line_end()
+        return ResolveStmt(target=target, threshold=threshold, strategy=strategy)
+
+    def _parse_guard(self) -> GuardStmt:
+        """guard <name> against hallucination { max_risk: 0.2, strategy: both }"""
+        self._expect(TokenKind.GUARD)
+        target = self._expect(TokenKind.IDENT, "Expected belief name").value
+        self._expect(TokenKind.AGAINST, "Expected 'against' after belief name")
+        self._advance()  # consume 'hallucination' identifier
+        max_risk = 0.2
+        strategy = "both"
+        if self._check(TokenKind.LBRACE):
+            self._advance()
+            self._skip_newlines()
+            while not self._check(TokenKind.RBRACE) and not self._check(TokenKind.EOF):
+                self._skip_newlines()
+                if self._check(TokenKind.RBRACE):
+                    break
+                key = self._advance().value
+                self._expect(TokenKind.COLON)
+                if key == "max_risk":
+                    max_risk = float(self._advance().value)
+                elif key == "strategy":
+                    strategy = self._advance().value
+                self._match(TokenKind.COMMA)
+                self._skip_newlines()
+            self._expect(TokenKind.RBRACE, "Expected '}' to close guard block")
+        self._expect_line_end()
+        return GuardStmt(target=target, max_risk=max_risk, strategy=strategy)
+
+    def _parse_evolve(self) -> EvolveStmt:
+        """evolve <name> until stable { max_iter: 3 }"""
+        self._expect(TokenKind.EVOLVE)
+        target = self._expect(TokenKind.IDENT, "Expected belief name").value
+        self._expect(TokenKind.UNTIL, "Expected 'until' after belief name")
+        condition = self._advance().value  # e.g. 'stable'
+        max_iter = 3
+        if self._check(TokenKind.LBRACE):
+            self._advance()
+            self._skip_newlines()
+            while not self._check(TokenKind.RBRACE) and not self._check(TokenKind.EOF):
+                self._skip_newlines()
+                if self._check(TokenKind.RBRACE):
+                    break
+                key = self._advance().value
+                self._expect(TokenKind.COLON)
+                if key == "max_iter":
+                    max_iter = int(self._advance().value)
+                self._match(TokenKind.COMMA)
+                self._skip_newlines()
+            self._expect(TokenKind.RBRACE, "Expected '}' to close evolve block")
+        self._expect_line_end()
+        return EvolveStmt(target=target, condition=condition, max_iter=max_iter)
+
+    def _parse_symbol_decl(self) -> SymbolDecl:
+        """symbol <name> { ... }"""
+        self._expect(TokenKind.SYMBOL)
+        name = self._expect(TokenKind.IDENT, "Expected symbol name").value
+        self._expect(TokenKind.LBRACE, "Expected '{' after symbol name")
+        self._expect_line_end()
+        body: list[Statement] = []
+        while not self._check(TokenKind.RBRACE) and not self._check(TokenKind.EOF):
+            self._skip_newlines()
+            if self._check(TokenKind.RBRACE):
+                break
+            body.append(self._parse_statement())
+            self._skip_newlines()
+        self._expect(TokenKind.RBRACE, "Expected '}' to close symbol block")
+        self._expect_line_end()
+        return SymbolDecl(name=name, body=body)
 
     def _parse_expr(self) -> Expr:
         return self._parse_or()
