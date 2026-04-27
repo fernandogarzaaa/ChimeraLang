@@ -1,6 +1,6 @@
 # ChimeraLang
 
-**A programming language designed for AI cognition** — probabilistic types, quantum consensus gates, directed hallucination, and cryptographic integrity proofs.
+**A programming language designed for AI cognition** — probabilistic types, quantum consensus gates, directed hallucination, cryptographic integrity proofs, and a Cognitive Intermediate Representation (CIR) with self-evolving symbol emergence.
 
 ChimeraLang treats uncertainty, confidence, and epistemic state as **first-class language primitives** rather than bolted-on libraries. Programs in ChimeraLang describe *how an AI should think*, not just what it should compute.
 
@@ -10,104 +10,147 @@ ChimeraLang treats uncertainty, confidence, and epistemic state as **first-class
 
 | Feature | Description |
 |---|---|
+| **CIR — Cognitive Intermediate Representation** | A graph-based IR where beliefs flow as Beta distributions through Inquiry → Consensus → Validation → Evolution nodes |
+| **Belief System** | `belief`/`inquire`/`resolve`/`guard`/`evolve` — first-class epistemic constructs backed by Dempster-Shafer evidence combination |
 | **Probabilistic Types** | `Confident<T>`, `Explore<T>`, `Converge<T>`, `Provisional<T>` — types that carry confidence scores |
 | **Quantum Consensus Gates** | Multiple candidate values vote under Gaussian noise; the result is the *consensus* of an ensemble |
-| **Hallucination Detection** | Inline `detect` blocks with `range`, `dictionary`, and `confidence_threshold` strategies |
+| **Symbol Emergence** | Reusable CIR subgraphs discovered automatically via Weisfeiler-Lehman hashing + TF-IDF similarity, evolved by Darwinian fitness competition |
+| **Hallucination Detection** | Inline `detect` blocks + guard nodes with variance-aware Beta distribution checks |
 | **Cryptographic Integrity** | Merkle-chain proofs and gate certificates ensure reasoning traces are tamper-evident |
+| **Temporal Belief Decay** | Beliefs with TTL decay toward uniform prior as they age — staleness is uncertainty, not error |
 | **Memory Modifiers** | `Ephemeral`, `Persistent`, `Provisional` — explicit lifecycle for every binding |
-| **Intent-First Goals** | `goal` blocks declare desired outcomes; `reasoning` blocks show the derivation |
-| **Control Flow** | `for x in list`, `match expr | pattern => body`, `if/else` |
-| **Built-in Functions** | `len`, `sum`, `max_val`, `min_val`, `abs_val`, `floor`, `ceil`, `round_val`, `confident`, `explore`, `confidence_of` |
 | **Interactive REPL** | `chimera repl` — try the language live in your terminal |
+
+---
 
 ## Quick Start
 
-### Prerequisites
-
-- Python ≥ 3.11
-
-### Run an example
-
 ```bash
+git clone https://github.com/fernandogarzaaa/ChimeraLang
 cd ChimeraLang
-python -m chimera.cli run examples/hello_chimera.chimera
+python -m chimera.cli run examples/belief_reasoning.chimera --trace
 ```
 
-### Available commands
+**Requirements:** Python ≥ 3.11, no external dependencies. Install `anthropic` for live LLM `inquire` calls; otherwise runs with a mock adapter.
 
-```
-python -m chimera.cli run    <file>   # Execute a .chimera program
-python -m chimera.cli check  <file>   # Type-check without running
-python -m chimera.cli prove  <file>   # Run and generate integrity proof
-python -m chimera.cli ast    <file>   # Print the AST
-python -m chimera.cli tokens <file>   # Print the token stream
-python -m chimera.cli repl           # Interactive REPL
-```
+---
 
-## Examples
+## Two Execution Paths
 
-Six example programs are included in [`examples/`](examples/):
+ChimeraLang has two fully independent, backward-compatible execution paths:
 
-| File | What it demonstrates |
-|---|---|
-| `hello_chimera.chimera` | Basic emit, confident values |
-| `quantum_reasoning.chimera` | Consensus gates with Gaussian noise, confidence propagation |
-| `goal_driven.chimera` | Goals, reasoning blocks, semantic constraints |
-| `hallucination_guard.chimera` | All 5 hallucination-detection strategies |
-| `for_loop.chimera` | For loops, list builtins, match expressions, two-arg constructors |
-| `advanced_reasoning.chimera` | Detect blocks, nested gates + reason, aggregate confidence |
+| Path | Triggered by | Constructs |
+|---|---|---|
+| **CIR path** | Any `belief` declaration | `belief`, `inquire`, `resolve`, `guard`, `evolve`, `symbol` |
+| **VM path** | All other programs | `fn`, `gate`, `goal`, `reason`, `val`, `for`, `match` |
 
-### Sample run
+Existing programs run identically. New CIR programs are automatically routed.
 
-```
-$ python -m chimera.cli run examples/for_loop.chimera
+---
 
-  emit: 4.08  [confidence=1.00]
-  emit: 5  [confidence=1.00]
-  emit: high  [confidence=1.00]
-  emit: medium  [confidence=1.00]
-  ...
-  emit: running  [confidence=1.00]
-  emit: 3.14159  [confidence=0.99]
-  emit: dark energy is repulsive  [confidence=0.65]
+## The CIR Belief System
 
-chimera: examples/for_loop.chimera — executed in 0.2ms (assertions: 1 passed, 0 failed)
-```
-
-## Project Structure
-
-```
-ChimeraLang/
-├── chimera/                  # Core language implementation
-│   ├── tokens.py             # 75+ token types
-│   ├── lexer.py              # Tokenizer
-│   ├── ast_nodes.py          # AST node hierarchy
-│   ├── parser.py             # Recursive-descent parser
-│   ├── types.py              # Runtime type system & confidence propagation
-│   ├── type_checker.py       # Static type checker
-│   ├── vm.py                 # Quantum Consensus VM
-│   ├── detect.py             # Hallucination detector
-│   ├── integrity.py          # Merkle chains & gate certificates
-│   └── cli.py                # Command-line interface + REPL
-├── examples/                 # Example .chimera programs
-├── spec/
-│   └── SPEC.md               # Formal language specification
-├── paper/
-│   └── chimeralang.tex       # ArXiv whitepaper (LaTeX)
-├── tests/                    # Test suite (60 tests)
-└── pyproject.toml
-```
-
-## Language Overview
-
-### Probabilistic Types
+### Syntax
 
 ```chimera
-val answer: Confident<Int> = confident(42, 0.95)
-val idea:   Explore<Text>  = explore("maybe this?", 0.60)
+belief cause := inquire {
+  prompt: "What are the primary causes of black hole formation?",
+  agents: [claude],
+  ttl: 3600
+}
+
+resolve cause with consensus { threshold: 0.8, strategy: dempster_shafer }
+guard cause against hallucination { max_risk: 0.2, strategy: both }
+evolve cause until stable { max_iter: 3 }
+
+emit cause
 ```
 
-Every value carries a **confidence score** (0.0–1.0). Confidence propagates through operations — if you combine two uncertain values, the result inherits a combined confidence.
+### Run it
+
+```bash
+python -m chimera.cli run examples/belief_reasoning.chimera --trace
+```
+
+```
+  emit: cause  [mean=0.750 variance=0.0170]
+
+— CIR Reasoning Trace —
+  [inquiry] prompt='What are the primary causes...' agents=['claude']
+  [inquiry] confidence=0.750 -> Beta(7.5,2.5)
+  [consensus] strategy=dempster_shafer threshold=0.75
+  [consensus] combined mean=0.750 variance=0.0170
+  [guard] max_risk=0.25 strategy=both
+  [guard] PASSED — mean=0.750 variance=0.0170
+  [evolve] condition=stable max_iter=3
+
+chimera: examples/belief_reasoning.chimera — CIR executed in 0.1ms
+```
+
+### Saving and reusing symbols
+
+```bash
+# First run: extract and save reusable subgraph symbols
+python -m chimera.cli run program.chimera --save-symbols=symbols.json
+
+# Later runs: load symbols to bootstrap belief patterns
+python -m chimera.cli run program.chimera --load-symbols=symbols.json
+```
+
+---
+
+## CIR Architecture
+
+```
+ChimeraLang Source
+      │
+   Lexer + Parser   (belief / inquire / resolve / guard / evolve / symbol)
+      │
+   AST              (BeliefDecl, InquireExpr, ResolveStmt, GuardStmt, EvolveStmt)
+      │
+   chimera/cir/
+   ├── lower.py     — AST → CIR graph (3 passes: structural, dead belief elimination, flow analysis)
+   ├── nodes.py     — BetaDist beliefs, InquiryNode, ConsensusNode, ValidationNode, EvolutionNode
+   ├── executor.py  — DS combination, BFT guard, free energy evolve, temporal decay, Claude adapter
+   └── symbols.py   — WL hashing, TF-IDF merge, multi-objective fitness, Darwinian competition, CRDT store
+      │
+   BeliefResult     (distribution + trace + guard violations + symbol log)
+```
+
+### How beliefs work
+
+Beliefs are **Beta distributions** `Beta(α, β)` — not scalar floats. This means:
+
+- `mean = α / (α + β)` — the estimated truth value
+- `variance = αβ / ((α+β)²(α+β+1))` — how uncertain we are about the estimate
+- Low pseudocounts = high variance = little evidence = uncertain belief
+- `inquire` converts a confidence score to `Beta(conf×10, (1-conf)×10)`
+
+### Dempster-Shafer consensus (`resolve`)
+
+`resolve` combines N beliefs using DS evidence combination — not a naive weighted average. When two sources conflict (one says very high, other says very low), a `ConflictException` is raised rather than silently averaging to 0.5.
+
+### Guard (`guard`)
+
+`guard` checks: `mean ≥ (1 − max_risk)` AND `variance ≤ 0.05`. A belief that's above the mean threshold but wildly uncertain still fails the variance check.
+
+### Free Energy evolution (`evolve`)
+
+`evolve` runs a fixed-point loop minimizing KL divergence between successive belief updates — inspired by Friston's Active Inference framework. Terminates when `KL < 0.001` or `max_iter` reached.
+
+### Symbol Emergence
+
+After each execution, ChimeraLang automatically extracts reusable CIR subgraphs:
+
+1. **Weisfeiler-Lehman hashing** — structural identity across different prompts
+2. **TF-IDF cosine similarity** — semantically similar subgraphs (score > 0.7) are merged
+3. **Multi-objective fitness** — `0.35×compression + 0.25×depth + 0.20×coherence + 0.20×usage`
+4. **Darwinian competition** — every 10 uses, bottom 20% by fitness are pruned; survivors mutate
+5. **CRDT G-Set store** — conflict-free distributed symbol library (merge = union)
+
+---
+
+## VM Path (Existing Language)
 
 ### Quantum Consensus Gates
 
@@ -119,41 +162,34 @@ gate consensus_answer(question: Text) -> Converge<Text>
   val answer: Text = "Reasoned answer to: " + question
   return answer
 end
+
 val result = consensus_answer("What causes consciousness?")
 ```
 
-Candidates are perturbed with Gaussian noise, then collapsed via `majority`, `weighted_vote`, or `highest_confidence`. The gate only passes if collective confidence meets the threshold.
-
-### For Loops
+### Probabilistic Types
 
 ```chimera
-val scores: List<Float> = [0.92, 0.76, 0.88, 0.55, 0.97]
+val answer: Confident<Int> = confident(42, 0.95)
+val idea:   Explore<Text>  = explore("maybe this?", 0.60)
+```
+
+### For Loops + Match
+
+```chimera
+val scores = [0.92, 0.76, 0.88]
 for s in scores
   emit s
 end
-```
 
-Iterate over any `List<T>` or `Text` (character by character).
-
-### Match Expressions
-
-```chimera
-val status: Int = 2
 match status
-  | 1 => emit "initialising"
-  | 2 => emit "running"
-  | 3 => emit "done"
+  | 1 => emit "running"
   | _ => emit "unknown"
 end
 ```
 
-Pattern-match against literals; `_` is the wildcard arm.
-
-### Hallucination Detection Blocks
+### Hallucination Detection
 
 ```chimera
-val temperature: Float = 37.2
-
 detect hallucination
   strategy: "range"
   on: temperature
@@ -162,72 +198,77 @@ detect hallucination
 end
 ```
 
-Inline `detect` blocks record probes to the reasoning trace; out-of-range values are automatically flagged.
+---
 
-### Built-in Functions
+## Examples
 
-| Function | Description |
+| File | What it demonstrates |
 |---|---|
-| `confident(val, score)` | Construct a `ConfidentValue` with the given score |
-| `explore(val, score)` | Construct an `ExploreValue` with the given score |
-| `confidence_of(val)` | Extract the confidence float from any value |
-| `consensus(val)` | True if a `ConvergeValue` reached multi-branch consensus |
-| `no_hallucination(val)` | True if value has trace and confidence > 0.5 |
-| `len(collection)` | Length of a list or string |
-| `sum(list)` | Sum of a numeric list |
-| `max_val(list)` | Maximum element |
-| `min_val(list)` | Minimum element |
-| `abs_val(x)` | Absolute value |
-| `floor(x)` | Floor of a float |
-| `ceil(x)` | Ceiling of a float |
-| `round_val(x, n?)` | Round to n decimal places |
-| `print(...)` | Log to reasoning trace |
+| `belief_reasoning.chimera` | **Full CIR pipeline**: belief → inquire → resolve → guard → evolve → emit |
+| `hello_chimera.chimera` | Basic emit, confident values |
+| `quantum_reasoning.chimera` | Consensus gates, confidence propagation |
+| `goal_driven.chimera` | Goals, reasoning blocks, semantic constraints |
+| `hallucination_guard.chimera` | All 5 hallucination-detection strategies |
+| `for_loop.chimera` | For loops, list builtins, match expressions |
+| `advanced_reasoning.chimera` | Detect blocks, nested gates + reason |
 
-### Integrity Proofs
+---
+
+## CLI Reference
 
 ```bash
-python -m chimera.cli prove examples/quantum_reasoning.chimera
+python -m chimera.cli run    <file> [--trace] [--save-symbols=out.json] [--load-symbols=in.json]
+python -m chimera.cli check  <file>          # Type-check without running
+python -m chimera.cli prove  <file>          # Run + generate integrity proof
+python -m chimera.cli parse  <file>          # Print AST
+python -m chimera.cli lex    <file>          # Print token stream
+python -m chimera.cli repl                   # Interactive REPL
 ```
 
-Generates a Merkle-chain proof with SHA-256 hashes so that every step of the reasoning trace is tamper-evident.
+---
 
-### Interactive REPL
-
-```bash
-python -m chimera.cli repl
-```
+## Project Structure
 
 ```
-ChimeraLang REPL v0.2.0  (type ':exit' or Ctrl-D to quit, ':help' for help)
-
-chimera> val x = confident(42, 0.98)
-chimera> emit x
-  >> 42  [confidence=0.9800]
-chimera> :exit
+ChimeraLang/
+├── chimera/
+│   ├── cir/                  # Cognitive Intermediate Representation
+│   │   ├── nodes.py          # BetaDist, CIR node types, CIRGraph + WL hash
+│   │   ├── lower.py          # AST → CIR lowering (3 passes)
+│   │   ├── executor.py       # DS combination, BFT guard, evolve, temporal decay
+│   │   ├── symbols.py        # Symbol emergence + CRDT store
+│   │   └── __init__.py       # run_cir() public API
+│   ├── tokens.py             # 85+ token types incl. belief/inquire/resolve/guard/evolve
+│   ├── lexer.py              # Tokenizer (incl. := walrus operator)
+│   ├── ast_nodes.py          # AST node hierarchy incl. BeliefDecl, InquireExpr
+│   ├── parser.py             # Recursive-descent parser (both paths)
+│   ├── types.py              # Runtime type system & confidence propagation
+│   ├── vm.py                 # Quantum Consensus VM (fn/gate/goal/reason path)
+│   ├── detect.py             # Hallucination detector
+│   ├── integrity.py          # Merkle chains & gate certificates
+│   └── cli.py                # CLI + REPL + automatic CIR/VM dispatch
+├── examples/
+├── spec/SPEC.md
+├── paper/chimeralang.tex
+├── tests/                    # 106 tests (60 VM + 46 CIR)
+└── pyproject.toml
 ```
 
-## Academic Paper
-
-A full whitepaper is available in [`paper/chimeralang.tex`](paper/chimeralang.tex). It covers the formal type system, execution model, consensus algorithms, and cryptographic integrity framework with 25 academic references.
-
-To compile:
-```bash
-pdflatex chimeralang.tex   # or upload to Overleaf
-bibtex chimeralang
-pdflatex chimeralang.tex
-pdflatex chimeralang.tex
-```
+---
 
 ## How It Differs
 
 | Aspect | Traditional Languages | ChimeraLang |
 |---|---|---|
-| Values | Deterministic | Carry confidence scores |
-| Execution | Single-path | Ensemble consensus |
-| Correctness | Tests/assertions | Continuous hallucination detection |
-| Auditability | Logs | Cryptographic Merkle proofs |
-| Intent | Implicit in code | Explicit `goal` declarations |
-| Control flow | Loops, conditionals | `for`, `match`, `if/else` with confidence propagation |
+| Values | Deterministic | Beta distributions carrying full uncertainty |
+| Evidence combination | N/A | Dempster-Shafer (conflict-aware, not naive averaging) |
+| Execution | Single-path | Ensemble consensus + CIR belief graph |
+| Correctness | Tests/assertions | Continuous guard nodes + hallucination detection |
+| Auditability | Logs | Cryptographic Merkle proofs + full reasoning trace |
+| Learning | None | Symbol emergence — reusable patterns emerge from execution history |
+| Staleness | N/A | Temporal decay — old beliefs become uncertain, not wrong |
+
+---
 
 ## License
 
