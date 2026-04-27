@@ -13,9 +13,12 @@ from chimera.ast_nodes import (
     BoolLiteral,
     CallExpr,
     CompareChain,
+    ConstitutedType,
+    ConstitutionDecl,
     Constraint,
     Declaration,
     EmitStmt,
+    EvolveConfig,
     EvolveStmt,
     Expr,
     ExprStmt,
@@ -23,20 +26,28 @@ from chimera.ast_nodes import (
     FnDecl,
     ForbiddenConstraint,
     ForStmt,
+    ForwardFn,
     GateDecl,
     GoalDecl,
+    GradType,
     GuardStmt,
     Identifier,
     IfExpr,
+    ImportStmt,
     InquireExpr,
     IntLiteral,
+    LayerDecl,
     ListLiteral,
+    LossConfig,
     MatchArm,
     MatchExpr,
     MemberExpr,
     MemoryType,
+    ModelDecl,
+    MoEBlock,
     MustConstraint,
     NamedType,
+    OptimizerConfig,
     Param,
     PrimitiveType,
     ProbabilisticType,
@@ -47,9 +58,12 @@ from chimera.ast_nodes import (
     Statement,
     StringLiteral,
     SymbolDecl,
+    TensorType,
+    TrainStmt,
     TypeExpr,
     UnaryOp,
     ValDecl,
+    VectorStoreType,
     GenericType,
 )
 from chimera.tokens import Token, TokenKind
@@ -145,6 +159,14 @@ class Parser:
             return self._parse_evolve()
         if kind == TokenKind.SYMBOL:
             return self._parse_symbol_decl()
+        if kind == TokenKind.IMPORT:
+            return self._parse_import()
+        if kind == TokenKind.MODEL:
+            return self._parse_model()
+        if kind == TokenKind.TRAIN:
+            return self._parse_train()
+        if kind == TokenKind.CONSTITUTION:
+            return self._parse_constitution()
         return self._parse_statement()
 
     # ------------------------------------------------------------------
@@ -657,6 +679,184 @@ class Parser:
         self._expect_line_end()
         return SymbolDecl(name=name, body=body)
 
+    # ------------------------------------------------------------------
+    # ML constructs
+    # ------------------------------------------------------------------
+
+    def _parse_import(self) -> ImportStmt:
+        self._expect(TokenKind.IMPORT)
+        parts = [self._expect(TokenKind.IDENT, "Expected module name").value]
+        while self._check(TokenKind.DOT):
+            self._advance(); parts.append(self._advance().value)
+        module = ".".join(parts)
+        symbols = []
+        alias = None
+        if self._check(TokenKind.LBRACE):
+            self._advance(); self._skip_newlines()
+            while not self._check(TokenKind.RBRACE) and not self._check(TokenKind.EOF):
+                self._skip_newlines()
+                if self._check(TokenKind.RBRACE): break
+                symbols.append(self._advance().value)
+                self._match(TokenKind.COMMA); self._skip_newlines()
+            self._expect(TokenKind.RBRACE)
+        if self._match(TokenKind.AS_KW):
+            alias = self._expect(TokenKind.IDENT).value
+        self._expect_line_end()
+        return ImportStmt(module=module, symbols=symbols, alias=alias)
+
+    def _parse_model(self) -> ModelDecl:
+        self._expect(TokenKind.MODEL)
+        name = self._expect(TokenKind.IDENT, "Expected model name").value
+        self._expect(TokenKind.LBRACE, "Expected '{'")
+        self._expect_line_end()
+        layers = []; forward_fn = None; uncertainty = "none"; constitution = None; device = "cpu"
+        while not self._check(TokenKind.RBRACE) and not self._check(TokenKind.EOF):
+            self._skip_newlines()
+            if self._check(TokenKind.RBRACE): break
+            if self._check(TokenKind.LAYER):
+                layers.append(self._parse_layer_decl())
+            elif self._check(TokenKind.MOE):
+                layers.append(self._parse_moe_layer())
+            elif self._check(TokenKind.FORWARD):
+                forward_fn = self._parse_forward_fn()
+            elif self._check(TokenKind.IDENT) and self._current().value == "uncertainty":
+                self._advance(); self._expect(TokenKind.COLON); uncertainty = self._advance().value; self._expect_line_end()
+            elif self._check(TokenKind.IDENT) and self._current().value == "constitution":
+                self._advance(); self._expect(TokenKind.COLON); constitution = self._advance().value; self._expect_line_end()
+            elif self._check(TokenKind.ON):
+                self._advance(); device = self._advance().value; self._expect_line_end()
+            else:
+                self._advance(); self._expect_line_end()
+            self._skip_newlines()
+        self._expect(TokenKind.RBRACE, "Expected '}'")
+        self._expect_line_end()
+        return ModelDecl(name=name, layers=layers, forward_fn=forward_fn, uncertainty=uncertainty, constitution=constitution, device=device)
+
+    def _parse_layer_decl(self) -> LayerDecl:
+        self._expect(TokenKind.LAYER)
+        name = self._expect(TokenKind.IDENT, "Expected layer name").value
+        self._expect(TokenKind.COLON)
+        kind = self._advance().value
+        in_dim = out_dim = None; config = {}; repeat = 1
+        if self._check(TokenKind.LPAREN):
+            self._advance()
+            if self._check(TokenKind.INT_LIT):
+                in_dim = int(self._advance().value)
+                if self._match(TokenKind.ARROW):
+                    out_dim = int(self._expect(TokenKind.INT_LIT).value)
+            self._expect(TokenKind.RPAREN)
+        if self._check(TokenKind.LBRACE):
+            config = self._parse_kv_block()
+        if self._check(TokenKind.STAR):
+            self._advance(); repeat = int(self._expect(TokenKind.INT_LIT).value)
+        self._expect_line_end()
+        return LayerDecl(name=name, kind=kind, in_dim=in_dim, out_dim=out_dim, repeat=repeat, config=config)
+
+    def _parse_moe_layer(self) -> LayerDecl:
+        self._expect(TokenKind.MOE)
+        name = self._expect(TokenKind.IDENT, "Expected MoE name").value
+        config = {}
+        if self._check(TokenKind.LBRACE):
+            config = self._parse_kv_block()
+        self._expect_line_end()
+        return LayerDecl(name=name, kind="MoE", in_dim=None, out_dim=None, config=config)
+
+    def _parse_forward_fn(self) -> ForwardFn:
+        self._expect(TokenKind.FORWARD)
+        self._expect(TokenKind.LPAREN)
+        params = []
+        while not self._check(TokenKind.RPAREN) and not self._check(TokenKind.EOF):
+            pname = self._expect(TokenKind.IDENT).value
+            type_ann = None
+            if self._match(TokenKind.COLON): type_ann = self._parse_type()
+            params.append((pname, type_ann))
+            self._match(TokenKind.COMMA)
+        self._expect(TokenKind.RPAREN)
+        ret_type = None
+        if self._match(TokenKind.ARROW): ret_type = self._parse_type()
+        self._expect(TokenKind.LBRACE); self._expect_line_end()
+        body = []
+        while not self._check(TokenKind.RBRACE) and not self._check(TokenKind.EOF):
+            self._skip_newlines()
+            if self._check(TokenKind.RBRACE): break
+            body.append(self._parse_statement()); self._skip_newlines()
+        self._expect(TokenKind.RBRACE); self._expect_line_end()
+        return ForwardFn(params=params, return_type=ret_type, body=body)
+
+    def _parse_train(self) -> TrainStmt:
+        self._expect(TokenKind.TRAIN)
+        model_name = self._expect(TokenKind.IDENT, "Expected model name").value
+        self._expect(TokenKind.ON, "Expected 'on'")
+        dataset = self._advance().value
+        self._expect(TokenKind.LBRACE); self._expect_line_end()
+        optimizer = OptimizerConfig("Adam", {"lr": 0.001})
+        loss = LossConfig("CrossEntropy")
+        epochs = 10; batch_size = 32; guards = []; evolve = None; precision = "float32"
+        while not self._check(TokenKind.RBRACE) and not self._check(TokenKind.EOF):
+            self._skip_newlines()
+            if self._check(TokenKind.RBRACE): break
+            if self._check(TokenKind.GUARD): guards.append(self._parse_guard()); continue
+            if self._check(TokenKind.EVOLVE): evolve = self._parse_evolve_config(); continue
+            key = self._advance().value; self._expect(TokenKind.COLON)
+            if key == "optimizer":
+                opt_name = self._advance().value; opt_params = {}
+                if self._check(TokenKind.LBRACE): opt_params = self._parse_kv_block()
+                optimizer = OptimizerConfig(opt_name, opt_params)
+            elif key == "loss": loss = LossConfig(self._advance().value)
+            elif key == "epochs": epochs = int(self._advance().value)
+            elif key == "batch_size": batch_size = int(self._advance().value)
+            elif key == "precision": precision = self._advance().value
+            self._expect_line_end(); self._skip_newlines()
+        self._expect(TokenKind.RBRACE); self._expect_line_end()
+        return TrainStmt(model_name=model_name, dataset=dataset, optimizer=optimizer, loss=loss, epochs=epochs, batch_size=batch_size, guards=guards, evolve=evolve, precision=precision)
+
+    def _parse_constitution(self) -> ConstitutionDecl:
+        self._expect(TokenKind.CONSTITUTION)
+        name = self._expect(TokenKind.IDENT, "Expected constitution name").value
+        self._expect(TokenKind.LBRACE); self._expect_line_end()
+        principles = []; critique_rounds = 2; max_violation = 0.05
+        while not self._check(TokenKind.RBRACE) and not self._check(TokenKind.EOF):
+            self._skip_newlines()
+            if self._check(TokenKind.RBRACE): break
+            if self._check(TokenKind.STRING_LIT):
+                principles.append(self._advance().value); self._expect_line_end()
+            elif self._check(TokenKind.IDENT):
+                key = self._advance().value; self._expect(TokenKind.COLON)
+                if key == "critique_rounds": critique_rounds = int(self._advance().value)
+                elif key == "max_violation_score": max_violation = float(self._advance().value)
+                self._expect_line_end()
+            else: self._advance()
+            self._skip_newlines()
+        self._expect(TokenKind.RBRACE); self._expect_line_end()
+        return ConstitutionDecl(name=name, principles=principles, critique_rounds=critique_rounds, max_violation_score=max_violation)
+
+    def _parse_evolve_config(self) -> EvolveConfig:
+        self._expect(TokenKind.EVOLVE)
+        self._advance()  # 'weights'
+        self._expect(TokenKind.UNTIL)
+        condition = self._advance().value
+        config = {}
+        if self._check(TokenKind.LBRACE): config = self._parse_kv_block()
+        self._expect_line_end()
+        return EvolveConfig(metric=config.get("metric", "val_loss"), patience=int(config.get("patience", 5)), max_iter=int(config.get("max_iter", 50)), condition=condition)
+
+    def _parse_kv_block(self) -> dict:
+        self._expect(TokenKind.LBRACE); self._skip_newlines()
+        result = {}
+        while not self._check(TokenKind.RBRACE) and not self._check(TokenKind.EOF):
+            self._skip_newlines()
+            if self._check(TokenKind.RBRACE): break
+            key = self._advance().value; self._expect(TokenKind.COLON)
+            tok = self._current()
+            if tok.kind == TokenKind.INT_LIT: result[key] = int(self._advance().value)
+            elif tok.kind == TokenKind.FLOAT_LIT: result[key] = float(self._advance().value)
+            elif tok.kind == TokenKind.STRING_LIT: result[key] = self._advance().value
+            elif tok.kind == TokenKind.BOOL_LIT: result[key] = self._advance().value == "true"
+            else: result[key] = self._advance().value
+            self._match(TokenKind.COMMA); self._skip_newlines()
+        self._expect(TokenKind.RBRACE)
+        return result
+
     def _parse_expr(self) -> Expr:
         return self._parse_or()
 
@@ -790,7 +990,8 @@ class Parser:
         # Allow type-constructor-like calls: Confident(...), Explore(...)
         if tok.kind in (TokenKind.CONFIDENT, TokenKind.EXPLORE_TYPE, TokenKind.CONVERGE,
                         TokenKind.PROVISIONAL, TokenKind.EPHEMERAL, TokenKind.PERSISTENT,
-                        TokenKind.ABOUT, TokenKind.EXPLORE):
+                        TokenKind.ABOUT, TokenKind.EXPLORE,
+                        TokenKind.TENSOR_KW, TokenKind.VECTORSTORE_KW, TokenKind.CONSTITUTED_KW):
             self._advance()
             return Identifier(name=tok.value)
 
@@ -872,6 +1073,44 @@ class Parser:
         if tok.kind == TokenKind.IDENT:
             self._advance()
             return NamedType(name=tok.value)
+
+        if tok.kind == TokenKind.TENSOR_KW:
+            self._advance()
+            dtype = "Float"
+            if self._match(TokenKind.LT):
+                dtype = self._advance().value
+                self._expect(TokenKind.GT)
+            shape = []
+            if self._match(TokenKind.LBRACKET):
+                while not self._check(TokenKind.RBRACKET) and not self._check(TokenKind.EOF):
+                    if self._check(TokenKind.INT_LIT):
+                        shape.append(int(self._advance().value))
+                    else:
+                        self._advance(); shape.append(None)
+                    self._match(TokenKind.COMMA)
+                self._expect(TokenKind.RBRACKET)
+            device = "cpu"
+            if self._check(TokenKind.ON):
+                self._advance(); device = self._advance().value
+            return TensorType(dtype=dtype, shape=shape, device=device)
+        if tok.kind == TokenKind.VECTORSTORE_KW:
+            self._advance()
+            dim = 768
+            if self._match(TokenKind.LT):
+                dim = int(self._expect(TokenKind.INT_LIT).value)
+                self._expect(TokenKind.GT)
+            capacity = 1_000_000
+            if self._match(TokenKind.LBRACKET):
+                capacity = int(self._expect(TokenKind.INT_LIT).value)
+                self._expect(TokenKind.RBRACKET)
+            return VectorStoreType(dim=dim, capacity=capacity)
+        if tok.kind == TokenKind.CONSTITUTED_KW:
+            self._advance()
+            inner = None
+            if self._match(TokenKind.LT):
+                inner = self._parse_type()
+                self._expect(TokenKind.GT)
+            return ConstitutedType(inner_type=inner)
 
         raise ParseError("Expected type expression", tok)
 
