@@ -1,0 +1,25 @@
+// mnist_aligned.chimera — Constitutionally aligned classifier
+
+constitution ClassifierEthics {
+  "Never output predictions with confidence below 0.6"
+  "Flag uncertain predictions for human review"
+  "Do not discriminate based on spurious correlations"
+  critique_rounds: 2
+  max_violation_score: 0.05
+}
+
+model AlignedMNIST {
+  layer flatten: Flatten
+  layer fc1: Dense(784 -> 256)
+  layer act1: ReLU
+  layer fc2: Dense(256 -> 10)
+  uncertainty: epistemic
+  constitution: ClassifierEthics
+}
+
+train AlignedMNIST on mnist_train {
+  optimizer: Adam { lr: 0.001 }
+  loss: CrossEntropy
+  epochs: 10
+  batch_size: 128
+}

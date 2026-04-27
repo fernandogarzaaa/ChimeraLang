@@ -1,0 +1,24 @@
+// mnist_classifier.chimera — MLP for MNIST
+// chimera compile examples/mnist_classifier.chimera --backend=pytorch --out=mnist_pt.py
+
+import chimera.nn { Dense, ReLU, Flatten, Dropout }
+import chimera.data { mnist }
+
+model MNISTClassifier {
+  layer flatten: Flatten
+  layer fc1: Dense(784 -> 256)
+  layer act1: ReLU
+  layer drop1: Dropout
+  layer fc2: Dense(256 -> 128)
+  layer act2: ReLU
+  layer fc3: Dense(128 -> 10)
+  uncertainty: epistemic
+}
+
+train MNISTClassifier on mnist_train {
+  optimizer: Adam { lr: 0.001 }
+  loss: CrossEntropy
+  epochs: 10
+  batch_size: 128
+  guard predictions against overconfidence { max_risk: 0.05, strategy: both }
+}

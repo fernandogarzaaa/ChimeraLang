@@ -172,6 +172,29 @@ def cmd_run(path: str, *, show_trace: bool = False, extra_args: list[str] | None
     )
 
 
+def cmd_compile(path: str, backend: str = "pytorch", out: str | None = None) -> None:
+    """Compile a .chimera program to PyTorch Python."""
+    source = _read_source(path)
+    try:
+        program = _parse(source, path)
+    except (LexError, ParseError) as e:
+        print(f"chimera: parse error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if backend == "pytorch":
+        from chimera.compiler import compile_to_pytorch
+        code = compile_to_pytorch(program)
+    else:
+        print(f"chimera: unsupported backend '{backend}'", file=sys.stderr)
+        sys.exit(1)
+
+    if out:
+        Path(out).write_text(code, encoding="utf-8")
+        print(f"chimera: compiled {path} -> {out} ({len(code)} chars)")
+    else:
+        print(code)
+
+
 def cmd_prove(path: str) -> None:
     """Execute + full integrity report."""
     source = _read_source(path)
@@ -300,16 +323,20 @@ USAGE = """\
 ChimeraLang v0.2.0 — A programming language for AI cognition
 
 Usage:
-  chimera run   <file.chimera>   Execute a program
-  chimera check <file.chimera>   Type-check only
-  chimera lex   <file.chimera>   Dump token stream
-  chimera parse <file.chimera>   Dump AST
-  chimera prove <file.chimera>   Run + integrity report
-  chimera repl                   Interactive REPL
+  chimera run     <file.chimera>                   Execute a program
+  chimera check   <file.chimera>                   Type-check only
+  chimera lex     <file.chimera>                   Dump token stream
+  chimera parse   <file.chimera>                   Dump AST
+  chimera prove   <file.chimera>                   Run + integrity report
+  chimera compile <file.chimera> [--backend=pytorch] [--out=file.py]
+                                                   Compile to PyTorch Python
+  chimera repl                                     Interactive REPL
 
 Options:
-  --trace   Show reasoning trace (with run)
-  --help    Show this message
+  --trace           Show reasoning trace (with run)
+  --backend=NAME    Compilation backend (default: pytorch)
+  --out=FILE        Write compiled output to file instead of stdout
+  --help            Show this message
 """
 
 
@@ -343,6 +370,11 @@ def main() -> None:
         "lex": lambda: cmd_lex(filepath),
         "parse": lambda: cmd_parse(filepath),
         "prove": lambda: cmd_prove(filepath),
+        "compile": lambda: cmd_compile(
+            filepath,
+            backend=next((a.split("=")[1] for a in flag_args if a.startswith("--backend=")), "pytorch"),
+            out=next((a.split("=")[1] for a in flag_args if a.startswith("--out=")), None),
+        ),
     }
 
     handler = commands.get(cmd)

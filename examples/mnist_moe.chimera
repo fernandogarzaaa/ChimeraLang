@@ -1,0 +1,20 @@
+// mnist_moe.chimera — MoE classifier on MNIST
+
+model MNISTMoE {
+  layer flatten: Flatten
+  layer embed: Linear(784 -> 512)
+  moe experts {
+    n_experts: 8
+    top_k: 2
+    expert_dim: 512
+  }
+  layer head: Linear(512 -> 10)
+  uncertainty: epistemic
+}
+
+train MNISTMoE on mnist_train {
+  optimizer: AdamW { lr: 0.0005, weight_decay: 0.01 }
+  loss: CrossEntropy
+  epochs: 15
+  batch_size: 256
+}
