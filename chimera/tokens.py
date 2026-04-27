@@ -45,6 +45,22 @@ class TokenKind(Enum):
     AGAINST = auto()
     UNTIL = auto()
 
+    # Keywords — ML constructs
+    MODEL = auto()
+    LAYER = auto()
+    TRAIN = auto()
+    FORWARD = auto()
+    IMPORT = auto()
+    FROM = auto()
+    AS_KW = auto()
+    MOE = auto()
+    CONSTITUTION = auto()
+    CONSTITUTED_KW = auto()
+    ON = auto()
+    TENSOR_KW = auto()
+    VECTORSTORE_KW = auto()
+    GRAD_KW = auto()
+
     # Keywords — constraint
     MUST = auto()
     ALLOW = auto()
@@ -173,6 +189,20 @@ KEYWORDS: dict[str, TokenKind] = {
     "with": TokenKind.WITH,
     "against": TokenKind.AGAINST,
     "until": TokenKind.UNTIL,
+    "model": TokenKind.MODEL,
+    "layer": TokenKind.LAYER,
+    "train": TokenKind.TRAIN,
+    "forward": TokenKind.FORWARD,
+    "import": TokenKind.IMPORT,
+    "from": TokenKind.FROM,
+    "as": TokenKind.AS_KW,
+    "moe": TokenKind.MOE,
+    "constitution": TokenKind.CONSTITUTION,
+    "on": TokenKind.ON,
+    "Tensor": TokenKind.TENSOR_KW,
+    "VectorStore": TokenKind.VECTORSTORE_KW,
+    "Grad": TokenKind.GRAD_KW,
+    "Constituted": TokenKind.CONSTITUTED_KW,
     "must": TokenKind.MUST,
     "allow": TokenKind.ALLOW,
     "forbidden": TokenKind.FORBIDDEN,
