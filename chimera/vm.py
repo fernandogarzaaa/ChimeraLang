@@ -229,16 +229,6 @@ class ChimeraVM:
             trace=[f"explore({raw}, {score})"],
             exploration_budget=1.0,
         )
-            # FIX (Bug 6): consensus requires actual divergence across branches,
-            # not just that branches exist. Check that branch values differ.
-            cv = args[0]
-            if len(cv.branch_values) >= 2:
-                raw_vals = [str(b.raw) for b in cv.branch_values]
-                unique_vals = set(raw_vals)
-                if len(unique_vals) == 1:
-                    # All branches identical — this is trivial consensus, not real agreement
-                    self._trace(
-                        "[consensus] WARNING: all branches returned identical values — "
 
     def _builtin_consensus(self, *args: ChimeraValue) -> ChimeraValue:
         if args and isinstance(args[0], ConvergeValue):

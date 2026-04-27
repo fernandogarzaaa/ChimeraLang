@@ -171,6 +171,7 @@ class Lexer:
         TWO_CHAR: dict[str, TokenKind] = {
             "->": TokenKind.ARROW,
             "=>": TokenKind.FAT_ARROW,
+            ":=": TokenKind.WALRUS,
             "==": TokenKind.EQ,
             "!=": TokenKind.NEQ,
             "<=": TokenKind.LTE,

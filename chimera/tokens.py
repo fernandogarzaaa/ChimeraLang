@@ -34,6 +34,17 @@ class TokenKind(Enum):
     EMIT = auto()
     DETECT = auto()
 
+    # Keywords — CIR / belief constructs
+    BELIEF = auto()
+    INQUIRE = auto()
+    RESOLVE = auto()
+    GUARD = auto()
+    EVOLVE = auto()
+    SYMBOL = auto()
+    WITH = auto()
+    AGAINST = auto()
+    UNTIL = auto()
+
     # Keywords — constraint
     MUST = auto()
     ALLOW = auto()
@@ -93,6 +104,7 @@ class TokenKind(Enum):
     OR = auto()
     NOT = auto()
     ASSIGN = auto()
+    WALRUS = auto()      # :=
     ARROW = auto()       # ->
     FAT_ARROW = auto()   # =>
 
@@ -152,6 +164,15 @@ KEYWORDS: dict[str, TokenKind] = {
     "assert": TokenKind.ASSERT,
     "emit": TokenKind.EMIT,
     "detect": TokenKind.DETECT,
+    "belief": TokenKind.BELIEF,
+    "inquire": TokenKind.INQUIRE,
+    "resolve": TokenKind.RESOLVE,
+    "guard": TokenKind.GUARD,
+    "evolve": TokenKind.EVOLVE,
+    "symbol": TokenKind.SYMBOL,
+    "with": TokenKind.WITH,
+    "against": TokenKind.AGAINST,
+    "until": TokenKind.UNTIL,
     "must": TokenKind.MUST,
     "allow": TokenKind.ALLOW,
     "forbidden": TokenKind.FORBIDDEN,
