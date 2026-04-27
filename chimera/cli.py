@@ -97,7 +97,7 @@ def cmd_check(path: str) -> None:
         sys.exit(1)
 
 
-def cmd_run(path: str, *, show_trace: bool = False) -> None:
+def cmd_run(path: str, *, show_trace: bool = False, extra_args: list[str] | None = None) -> None:
     """Execute a .chimera program."""
     source = _read_source(path)
     try:
@@ -106,6 +106,47 @@ def cmd_run(path: str, *, show_trace: bool = False) -> None:
         print(f"chimera: parse error: {e}", file=sys.stderr)
         sys.exit(1)
 
+    # Route to CIR path if program uses belief constructs
+    from chimera.ast_nodes import BeliefDecl
+    uses_cir = any(isinstance(d, BeliefDecl) for d in program.declarations)
+
+    if uses_cir:
+        from chimera.cir import run_cir
+        args = extra_args or []
+        save_sym = next(
+            (a.split("=", 1)[1] for a in args if a.startswith("--save-symbols=")), None
+        )
+        load_sym = next(
+            (a.split("=", 1)[1] for a in args if a.startswith("--load-symbols=")), None
+        )
+        cir_result = run_cir(program, save_symbols=save_sym, load_symbols=load_sym)
+
+        if cir_result.emitted:
+            for name, dist in cir_result.emitted:
+                print(f"  emit: {name}  [mean={dist.mean:.3f} variance={dist.variance:.4f}]")
+
+        if show_trace and cir_result.trace:
+            print("\n— CIR Reasoning Trace —")
+            for entry in cir_result.trace:
+                print(f"  {entry}")
+
+        if cir_result.guard_violations:
+            print("\n— Guard Violations —")
+            for v in cir_result.guard_violations:
+                print(f"  {v}")
+
+        warnings = cir_result.meta.get("lowering_warnings", [])
+        if warnings:
+            print("\n— Lowering Warnings —")
+            for w in warnings:
+                print(f"  {w}")
+
+        print(f"\nchimera: {path} — CIR executed in {cir_result.duration_ms:.1f}ms")
+        if cir_result.guard_violations:
+            sys.exit(1)
+        return
+
+    # Existing VM path (fn/gate/goal/reason programs)
     vm = ChimeraVM()
     result = vm.execute(program)
 
@@ -295,8 +336,9 @@ def main() -> None:
 
     filepath = positional[0]
 
+    flag_args = [a for a in rest if a.startswith("--") and a != "--trace"]
     commands = {
-        "run": lambda: cmd_run(filepath, show_trace=trace),
+        "run": lambda: cmd_run(filepath, show_trace=trace, extra_args=flag_args),
         "check": lambda: cmd_check(filepath),
         "lex": lambda: cmd_lex(filepath),
         "parse": lambda: cmd_parse(filepath),
