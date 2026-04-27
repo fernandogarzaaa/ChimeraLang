@@ -331,3 +331,102 @@ class EvolveStmt(Statement):
 class SymbolDecl(Declaration):
     name: str = ""
     body: list[Statement] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# ML Constructs — Phase 1 PyTorch compiler
+# ---------------------------------------------------------------------------
+
+@dataclass
+class TensorType(TypeExpr):
+    dtype: str = "Float"
+    shape: list = field(default_factory=list)
+    device: str = "cpu"
+
+@dataclass
+class VectorStoreType(TypeExpr):
+    dim: int = 768
+    capacity: int = 1_000_000
+
+@dataclass
+class ConstitutedType(TypeExpr):
+    inner_type: "TypeExpr | None" = None
+
+@dataclass
+class GradType(TypeExpr):
+    inner_type: "TypeExpr | None" = None
+
+@dataclass
+class OptimizerConfig(ASTNode):
+    name: str = "Adam"
+    params: dict = field(default_factory=dict)
+
+@dataclass
+class LossConfig(ASTNode):
+    name: str = "CrossEntropy"
+
+@dataclass
+class LayerDecl(ASTNode):
+    name: str = ""
+    kind: str = ""
+    in_dim: "int | None" = None
+    out_dim: "int | None" = None
+    repeat: int = 1
+    config: dict = field(default_factory=dict)
+
+@dataclass
+class ForwardFn(ASTNode):
+    params: list = field(default_factory=list)
+    return_type: "TypeExpr | None" = None
+    body: list = field(default_factory=list)
+
+@dataclass
+class EvolveConfig(ASTNode):
+    metric: str = "val_loss"
+    patience: int = 5
+    max_iter: int = 50
+    condition: str = "converged"
+
+@dataclass
+class ModelDecl(Declaration):
+    name: str = ""
+    layers: list = field(default_factory=list)
+    forward_fn: "ForwardFn | None" = None
+    uncertainty: str = "none"
+    constitution: "str | None" = None
+    device: str = "cpu"
+    config: dict = field(default_factory=dict)
+
+@dataclass
+class TrainStmt(Statement):
+    model_name: str = ""
+    dataset: str = ""
+    optimizer: "OptimizerConfig | None" = None
+    loss: "LossConfig | None" = None
+    epochs: int = 10
+    batch_size: int = 32
+    guards: list = field(default_factory=list)
+    evolve: "EvolveConfig | None" = None
+    precision: str = "float32"
+    config: dict = field(default_factory=dict)
+
+@dataclass
+class MoEBlock(ASTNode):
+    name: str = ""
+    n_experts: int = 8
+    top_k: int = 2
+    expert_dim: int = 4096
+    config: dict = field(default_factory=dict)
+
+@dataclass
+class ConstitutionDecl(Declaration):
+    name: str = ""
+    principles: list = field(default_factory=list)
+    critique_rounds: int = 2
+    max_violation_score: float = 0.05
+
+@dataclass
+class ImportStmt(Statement):
+    module: str = ""
+    symbols: list = field(default_factory=list)
+    alias: "str | None" = None
