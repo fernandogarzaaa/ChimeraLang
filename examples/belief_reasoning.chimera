@@ -1,0 +1,17 @@
+// belief_reasoning.chimera
+// Demonstrates the full CIR pipeline:
+// belief -> inquire -> resolve -> guard -> evolve -> emit
+//
+// Run: chimera run examples/belief_reasoning.chimera --trace
+
+belief cause := inquire {
+  prompt: "What are the primary causes of black hole formation?",
+  agents: [claude],
+  ttl: 3600
+}
+
+resolve cause with consensus { threshold: 0.75, strategy: dempster_shafer }
+guard cause against hallucination { max_risk: 0.25, strategy: both }
+evolve cause until stable { max_iter: 3 }
+
+emit cause
