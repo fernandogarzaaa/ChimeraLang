@@ -79,8 +79,8 @@ class VectorStore:
         self._validate_vector(query)
         if not self._vectors:
             return []
-        q = self._ensure_numpy([query]).astype('float32')
         if HAS_FAISS and self._index is not None:
+            q = self._ensure_numpy([query]).astype('float32')
             # Search HNSW index
             ef_search = max(self.m, top_k * 2)
             self._index.hnsw.efSearch = ef_search

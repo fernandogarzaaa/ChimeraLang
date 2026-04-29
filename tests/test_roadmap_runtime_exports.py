@@ -25,3 +25,16 @@ def test_vector_store_supports_language_level_write_alias():
     store.write([1.0, 0.0], "alpha")
 
     assert store.read([1.0, 0.0], top_k=1) == [("alpha", 1.0)]
+
+
+def test_vector_store_read_does_not_require_numpy(monkeypatch):
+    import chimera_runtime.vector_store as vector_store
+
+    monkeypatch.setattr(vector_store, "HAS_FAISS", False)
+    monkeypatch.setattr(vector_store.VectorStore, "_ensure_numpy", staticmethod(lambda value: value))
+
+    store = vector_store.VectorStore(dim=2, capacity=2)
+    store.write([1.0, 0.0], "alpha")
+    store.write([0.0, 1.0], "beta")
+
+    assert store.read([1.0, 0.0], top_k=1) == [("alpha", 1.0)]
