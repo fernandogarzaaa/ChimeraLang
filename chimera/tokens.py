@@ -59,6 +59,9 @@ class TokenKind(Enum):
     ON = auto()
     TENSOR_KW = auto()
     VECTORSTORE_KW = auto()
+    SPIKETRAIN_KW = auto()
+    MULTIMODAL_KW = auto()
+    MEMPTR_KW = auto()
     GRAD_KW = auto()
 
     # Keywords — constraint
@@ -136,6 +139,7 @@ class TokenKind(Enum):
     DOT = auto()
     PIPE = auto()
     UNDERSCORE = auto()   # _ wildcard for match
+    AT = auto()
 
     # Special
     NEWLINE = auto()
@@ -201,6 +205,9 @@ KEYWORDS: dict[str, TokenKind] = {
     "on": TokenKind.ON,
     "Tensor": TokenKind.TENSOR_KW,
     "VectorStore": TokenKind.VECTORSTORE_KW,
+    "SpikeTrain": TokenKind.SPIKETRAIN_KW,
+    "Multimodal": TokenKind.MULTIMODAL_KW,
+    "MemPtr": TokenKind.MEMPTR_KW,
     "Grad": TokenKind.GRAD_KW,
     "Constituted": TokenKind.CONSTITUTED_KW,
     "must": TokenKind.MUST,

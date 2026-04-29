@@ -173,7 +173,7 @@ def cmd_run(path: str, *, show_trace: bool = False, extra_args: list[str] | None
 
 
 def cmd_compile(path: str, backend: str = "pytorch", out: str | None = None) -> None:
-    """Compile a .chimera program to PyTorch Python."""
+    """Compile a .chimera program to a supported backend."""
     source = _read_source(path)
     try:
         program = _parse(source, path)
@@ -184,6 +184,9 @@ def cmd_compile(path: str, backend: str = "pytorch", out: str | None = None) -> 
     if backend == "pytorch":
         from chimera.compiler import compile_to_pytorch
         code = compile_to_pytorch(program)
+    elif backend == "llvm":
+        from chimera.compiler import compile_to_llvm
+        code = compile_to_llvm(program)
     else:
         print(f"chimera: unsupported backend '{backend}'", file=sys.stderr)
         sys.exit(1)

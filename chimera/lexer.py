@@ -17,7 +17,7 @@ class LexError(Exception):
 
 class Lexer:
     def __init__(self, source: str, filename: str = "<stdin>") -> None:
-        self._src = source
+        self._src = source.lstrip("\ufeff")
         self._file = filename
         self._pos = 0
         self._line = 1
@@ -28,7 +28,14 @@ class Lexer:
     # Public
     # ------------------------------------------------------------------
 
+    @property
+    def tokens(self) -> list[Token]:
+        """Tokenize lazily for callers that use attribute-style access."""
+        return self.tokenize()
+
     def tokenize(self) -> list[Token]:
+        if self._tokens and self._tokens[-1].kind == TokenKind.EOF:
+            return self._tokens
         while not self._at_end():
             self._skip_whitespace_and_comments()
             if self._at_end():
@@ -202,6 +209,7 @@ class Lexer:
             ":": TokenKind.COLON,
             ".": TokenKind.DOT,
             "|": TokenKind.PIPE,
+            "@": TokenKind.AT,
         }
 
         if ch in ONE_CHAR:

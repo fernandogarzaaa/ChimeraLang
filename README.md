@@ -35,14 +35,15 @@ python -m chimera.cli run examples/belief_reasoning.chimera --trace
 
 ---
 
-## Two Execution Paths
+## Execution Paths
 
-ChimeraLang has two fully independent, backward-compatible execution paths:
+ChimeraLang has three backward-compatible execution paths:
 
 | Path | Triggered by | Constructs |
 |---|---|---|
 | **CIR path** | Any `belief` declaration | `belief`, `inquire`, `resolve`, `guard`, `evolve`, `symbol` |
 | **VM path** | All other programs | `fn`, `gate`, `goal`, `reason`, `val`, `for`, `match` |
+| **Compiler path** | `chimera compile` | `model`, `layer`, `train`, `constitution`, `retrieval`, `MoE`, roadmap declarations |
 
 Existing programs run identically. New CIR programs are automatically routed.
 
@@ -220,10 +221,28 @@ end
 python -m chimera.cli run    <file> [--trace] [--save-symbols=out.json] [--load-symbols=in.json]
 python -m chimera.cli check  <file>          # Type-check without running
 python -m chimera.cli prove  <file>          # Run + generate integrity proof
+python -m chimera.cli compile <file> [--backend=pytorch|llvm] [--out=file]
 python -m chimera.cli parse  <file>          # Print AST
 python -m chimera.cli lex    <file>          # Print token stream
 python -m chimera.cli repl                   # Interactive REPL
 ```
+
+---
+
+## Production Status
+
+The ML roadmap surface in `docs/roadmap/CHIMERALANG-ML-SPEC-V2.md` is implemented as a production-ready alpha:
+
+| Area | Status |
+|---|---|
+| Language surface | Parser and AST support for tensor metadata, vector stores, spike trains, multimodal types, memory pointers, retrieval blocks, causal models, federated training, meta-learning, self-improvement, swarms, replay buffers, rewards, and predictive coding |
+| Validation | Type checker rejects invalid dimensions, retrieval settings, roadmap declarations, and constitution schemas before generation |
+| PyTorch backend | Generates executable modules for dense networks, MoE routing, retrieval stores, and roadmap-aware model metadata |
+| LLVM backend | `chimera compile --backend=llvm` emits typed LLVM IR skeletons for model declarations |
+| Runtime package | `chimera_runtime` exports vector storage, spiking runtime primitives, swarm coordination, and roadmap system containers |
+| CI and packaging | GitHub Actions run tests on Python 3.11-3.13 and build wheel/sdist artifacts |
+
+Roadmap details and verification notes live in `docs/roadmap/IMPLEMENTATION-STATUS.md`.
 
 ---
 

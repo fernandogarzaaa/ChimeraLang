@@ -15,10 +15,12 @@ from chimera.ast_nodes import (
     BinaryOp,
     BoolLiteral,
     CallExpr,
+    CausalModelDecl,
     Declaration,
     EmitStmt,
     Expr,
     ExprStmt,
+    FederatedTrainStmt,
     FloatLiteral,
     FnDecl,
     ForStmt,
@@ -31,19 +33,34 @@ from chimera.ast_nodes import (
     ListLiteral,
     MatchExpr,
     MemberExpr,
+    MemPtrType,
     MemoryType,
+    MetaTrainStmt,
+    ModelDecl,
+    MultimodalType,
     NamedType,
     Param,
     PrimitiveType,
     ProbabilisticType,
     Program,
+    PredictiveCodingDecl,
     ReasonDecl,
     ReturnStmt,
+    ReplayBufferDecl,
+    RewardSystemDecl,
+    SelfImproveDecl,
     Statement,
     StringLiteral,
+    SpikeTrainType,
+    SwarmDecl,
+    TensorType,
     TypeExpr,
+    TrainStmt,
     UnaryOp,
     ValDecl,
+    VectorStoreType,
+    ConstitutedType,
+    ConstitutionDecl,
 )
 from chimera.types import (
     BOOL_T,
@@ -53,13 +70,20 @@ from chimera.types import (
     TEXT_T,
     VOID_T,
     ChimeraType,
+    ConstitutedTypeDesc,
     FnTypeDesc,
     GenericTypeDesc,
     MemTypeDesc,
+    PrivacyTypeDesc,
     PrimitiveTypeDesc,
     ProbTypeDesc,
     PromotionViolation,
+    TensorTypeDesc,
     TypeMismatch,
+    VectorStoreTypeDesc,
+    SpikeTrainTypeDesc,
+    MultimodalTypeDesc,
+    MemPtrTypeDesc,
 )
 
 
@@ -117,6 +141,23 @@ class TypeChecker:
             self._check_reason(node)
         elif isinstance(node, ValDecl):
             self._check_val(node)
+        elif isinstance(node, ModelDecl):
+            self._check_model(node)
+        elif isinstance(node, TrainStmt):
+            self._check_train(node)
+        elif isinstance(node, ConstitutionDecl):
+            self._check_constitution(node)
+        elif isinstance(node, (
+            CausalModelDecl,
+            FederatedTrainStmt,
+            MetaTrainStmt,
+            SelfImproveDecl,
+            SwarmDecl,
+            ReplayBufferDecl,
+            RewardSystemDecl,
+            PredictiveCodingDecl,
+        )):
+            self._check_roadmap_decl(node)
         elif isinstance(node, Statement):
             self._check_stmt(node)
 
@@ -301,6 +342,129 @@ class TypeChecker:
                     )
 
     # ------------------------------------------------------------------
+    # ML declarations
+    # ------------------------------------------------------------------
+
+    def _check_model(self, model: ModelDecl) -> None:
+        """Check a model declaration: validate layer chain dims and constitution."""
+        self._check_retrieval_config(model)
+
+        # Validate layer chain dimension continuity
+        chain_errors = self._validate_layer_chain(model.layers)
+        for err in chain_errors:
+            self._result.errors.append(f"Model '{model.name}': {err}")
+
+        # Check constitution reference if present
+        if model.constitution:
+            # Look up the constitution declaration
+            const_type = self._env.lookup(model.constitution)
+            if const_type is None:
+                self._result.errors.append(
+                    f"Model '{model.name}': constitution '{model.constitution}' not found"
+                )
+            elif not isinstance(const_type, ConstitutedTypeDesc):
+                self._result.errors.append(
+                    f"Model '{model.name}': '{model.constitution}' is not a constitution type"
+                )
+
+        # Register model in environment with its layers' output dims
+        self._env.define(model.name, PrimitiveTypeDesc(name=f"Model<{model.name}>"))
+        for layer in model.layers:
+            if hasattr(layer, "out_dim") and layer.out_dim is not None:
+                self._env.define(f"_layer_out_{layer.name}", layer.out_dim)
+
+    def _check_train(self, train: TrainStmt) -> None:
+        """Check a train statement: verify model exists and params are valid."""
+        if not self._env.lookup(train.model_name):
+            self._result.warnings.append(
+                f"Train statement references model '{train.model_name}' "
+                f"that may not be defined above it"
+            )
+        if train.epochs <= 0:
+            self._result.errors.append(
+                f"Train epochs must be positive, got {train.epochs}"
+            )
+        if train.batch_size <= 0:
+            self._result.errors.append(
+                f"Train batch_size must be positive, got {train.batch_size}"
+            )
+
+    def _check_constitution(self, decl: ConstitutionDecl) -> None:
+        """Register a constitution declaration as a type."""
+        if not decl.principles:
+            self._result.warnings.append(
+                f"Constitution '{decl.name}' has no principles"
+            )
+        for p in decl.principles:
+            if not p or not p.strip():
+                self._result.errors.append(
+                    f"Constitution '{decl.name}': empty principle string"
+                )
+        # Register as ConstitutedTypeDesc for later ModelDecl reference
+        self._env.define(
+            decl.name,
+            ConstitutedTypeDesc(name=decl.name, inner=VOID_T),
+        )
+
+    def _check_roadmap_decl(self, decl: object) -> None:
+        name = getattr(decl, "name", "")
+        if name:
+            self._env.define(name, PrimitiveTypeDesc(name=f"{type(decl).__name__}<{name}>"))
+        config = getattr(decl, "config", {})
+        model_name = config.get("model") or config.get("base_model")
+        if model_name and self._env.lookup(str(model_name)) is None:
+            self._result.warnings.append(
+                f"{type(decl).__name__} '{name}' references model '{model_name}' "
+                f"that may not be defined above it"
+            )
+        kind = type(decl).__name__
+        if kind == "FederatedTrainStmt":
+            self._require_positive(config, "rounds", f"{name} rounds")
+            self._require_positive(config, "privacy_epsilon", f"{name} privacy_epsilon")
+        elif kind == "MetaTrainStmt":
+            self._require_positive(config, "inner_steps", f"{name} inner_steps")
+        elif kind == "SelfImproveDecl":
+            self._require_positive(config, "max_generations", f"{name} max_generations")
+        elif kind == "SwarmDecl":
+            self._require_positive(config, "agents", f"{name} agents")
+        elif kind == "ReplayBufferDecl":
+            self._require_positive(config, "capacity", f"{name} capacity")
+        elif kind == "PredictiveCodingDecl":
+            self._require_positive(config, "depth", f"{name} depth")
+
+    def _check_retrieval_config(self, model: ModelDecl) -> None:
+        retrieval = getattr(model, "retrieval", None)
+        if retrieval is None:
+            return
+        config = getattr(retrieval, "config", {})
+        self._require_positive(config, "top_k", f"Model '{model.name}' retrieval top_k")
+        self._require_positive(config, "store_dim", f"Model '{model.name}' retrieval store_dim", required=False)
+        self._require_positive(config, "capacity", f"Model '{model.name}' retrieval capacity", required=False)
+        if "min_similarity" in config:
+            try:
+                value = float(config["min_similarity"])
+            except (TypeError, ValueError):
+                self._result.errors.append(f"Model '{model.name}' retrieval min_similarity must be numeric")
+                return
+            if value < 0.0 or value > 1.0:
+                self._result.errors.append(
+                    f"Model '{model.name}' retrieval min_similarity must be between 0.0 and 1.0"
+                )
+
+    def _require_positive(self, config: dict, key: str, label: str, *, required: bool = True) -> None:
+        if key not in config:
+            if required:
+                self._result.errors.append(f"{label} is required")
+            return
+        try:
+            value = float(config[key])
+        except (TypeError, ValueError):
+            self._result.errors.append(f"{label} must be numeric")
+            return
+        if value <= 0:
+            self._result.errors.append(f"{label} must be positive")
+
+    # ------------------------------------------------------------------
     # Type resolution
     # ------------------------------------------------------------------
 
@@ -323,4 +487,59 @@ class TypeChecker:
             if resolved:
                 return resolved
             return PrimitiveTypeDesc(name=t.name)
+        if isinstance(t, TensorType):
+            tensor = TensorTypeDesc(
+                name="Tensor",
+                dtype=t.dtype if hasattr(t, "dtype") else "Float",
+                dims=tuple(t.shape) if hasattr(t, "shape") and t.shape else (),
+                device=t.device if hasattr(t, "device") else "cpu",
+                causality=t.causality,
+            )
+            if t.privacy:
+                return PrivacyTypeDesc(
+                    name="Private",
+                    inner=tensor,
+                    epsilon=float(t.privacy.get("epsilon", 1.0)),
+                    delta=float(t.privacy.get("delta", 1e-5)),
+                )
+            return tensor
+        if isinstance(t, VectorStoreType):
+            return VectorStoreTypeDesc(
+                name="VectorStore",
+                dim=t.dim,
+                capacity=t.capacity,
+            )
+        if isinstance(t, SpikeTrainType):
+            return SpikeTrainTypeDesc(
+                name="SpikeTrain",
+                dtype=t.dtype,
+                neurons=t.neurons,
+                timesteps=t.timesteps,
+            )
+        if isinstance(t, MultimodalType):
+            inner = self._resolve_type(t.inner_type) if t.inner_type else VOID_T
+            return MultimodalTypeDesc(name="Multimodal", inner=inner)
+        if isinstance(t, MemPtrType):
+            inner = self._resolve_type(t.inner_type) if t.inner_type else VOID_T
+            return MemPtrTypeDesc(name="MemPtr", inner=inner, address=t.address)
+        if isinstance(t, ConstitutedType):
+            inner = self._resolve_type(t.inner_type) if t.inner_type else VOID_T
+            return ConstitutedTypeDesc(name="Constituted", inner=inner)
         return VOID_T
+
+    # ------------------------------------------------------------------
+    # Layer chain validation
+    # ------------------------------------------------------------------
+
+    def _validate_layer_chain(self, layers: list) -> list[str]:
+        """Verify each layer's out_dim matches the next layer's in_dim."""
+        errors = []
+        for i in range(len(layers) - 1):
+            curr_out = getattr(layers[i], "out_dim", None)
+            next_in = getattr(layers[i + 1], "in_dim", None)
+            if curr_out is not None and next_in is not None and curr_out != next_in:
+                errors.append(
+                    f"Layer '{layers[i].name}' outputs {curr_out} "
+                    f"but '{layers[i + 1].name}' expects in_dim={next_in}"
+                )
+        return errors

@@ -177,6 +177,57 @@ class FnTypeDesc(ChimeraType):
     return_type: ChimeraType
 
 
+@dataclass(frozen=True, slots=True)
+class TensorTypeDesc(ChimeraType):
+    """Tensor<Dtype>[shape] with optional device and shape dimensions."""
+    dtype: str = "Float"
+    dims: tuple[int, ...] = ()
+    device: str = "cpu"
+    causality: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ConstitutedTypeDesc(ChimeraType):
+    """Constituted<T> — T that has passed constitutional review."""
+    inner: ChimeraType | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class VectorStoreTypeDesc(ChimeraType):
+    """VectorStore<dim>[capacity] — external memory with HNSW index."""
+    dim: int = 768
+    capacity: int = 1_000_000
+
+
+@dataclass(frozen=True, slots=True)
+class SpikeTrainTypeDesc(ChimeraType):
+    """SpikeTrain<T>[neurons, timesteps] — neuromorphic spike pattern."""
+    dtype: str = "Float"
+    neurons: int | str | None = None
+    timesteps: int | str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class MultimodalTypeDesc(ChimeraType):
+    """Multimodal<T> — type-safe multimodal value."""
+    inner: ChimeraType | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class MemPtrTypeDesc(ChimeraType):
+    """MemPtr<T>[address] — external memory pointer."""
+    inner: ChimeraType | None = None
+    address: int | str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PrivacyTypeDesc(ChimeraType):
+    """@private(epsilon, delta) — differential privacy guarantee."""
+    inner: ChimeraType | None = None
+    epsilon: float = 1.0
+    delta: float = 1e-5
+
+
 # ---------------------------------------------------------------------------
 # Built-in type singletons
 # ---------------------------------------------------------------------------
@@ -186,6 +237,13 @@ FLOAT_T = PrimitiveTypeDesc(name="Float")
 BOOL_T = PrimitiveTypeDesc(name="Bool")
 TEXT_T = PrimitiveTypeDesc(name="Text")
 VOID_T = PrimitiveTypeDesc(name="Void")
+TENSOR_T = TensorTypeDesc(name="Tensor")
+CONSTITUTED_T = ConstitutedTypeDesc(name="Constituted")
+VECTORSTORE_T = VectorStoreTypeDesc(name="VectorStore")
+SPIKETRAIN_T = SpikeTrainTypeDesc(name="SpikeTrain")
+MULTIMODAL_T = MultimodalTypeDesc(name="Multimodal")
+MEMPTR_T = MemPtrTypeDesc(name="MemPtr")
+PRIVATE_T = PrivacyTypeDesc(name="Private")
 
 BUILTINS: dict[str, ChimeraType] = {
     "Int": INT_T,
@@ -193,4 +251,11 @@ BUILTINS: dict[str, ChimeraType] = {
     "Bool": BOOL_T,
     "Text": TEXT_T,
     "Void": VOID_T,
+    "Tensor": TENSOR_T,
+    "Constituted": CONSTITUTED_T,
+    "VectorStore": VECTORSTORE_T,
+    "SpikeTrain": SPIKETRAIN_T,
+    "Multimodal": MULTIMODAL_T,
+    "MemPtr": MEMPTR_T,
+    "Private": PRIVATE_T,
 }

@@ -44,9 +44,9 @@ class PyTorchCodegen:
         self._emit("import torch.nn as nn")
         self._emit("from torch.utils.data import DataLoader")
         self._emit("try:")
-        self._emit("    from chimera_runtime import BeliefTracker, GuardLayer, ConstitutionLayer")
+        self._emit("    from chimera_runtime import BeliefTracker, GuardLayer, ConstitutionLayer, VectorStore")
         self._emit("except ImportError:")
-        self._emit("    BeliefTracker = GuardLayer = ConstitutionLayer = None")
+        self._emit("    BeliefTracker = GuardLayer = ConstitutionLayer = VectorStore = None")
         self._emit("")
         for decl in getattr(program, "declarations", []):
             cls_name = self._node_kind(decl)
@@ -73,8 +73,19 @@ class PyTorchCodegen:
             self._emit("def __init__(self):")
             with self._indented():
                 self._emit("super().__init__()")
+                self._emit("self._aux_losses = []")
                 for layer in model.layers:
                     self._gen_layer_init(layer, model)
+                retrieval = getattr(model, "retrieval", None)
+                if retrieval is not None:
+                    cfg = getattr(retrieval, "config", {})
+                    store_dim = int(cfg.get("store_dim", cfg.get("dim", 768)))
+                    capacity = int(cfg.get("capacity", 1_000_000))
+                    top_k = int(cfg.get("top_k", 10))
+                    min_similarity = float(cfg.get("min_similarity", 0.0))
+                    self._emit(f"self._retrieval_store = VectorStore(dim={store_dim}, capacity={capacity}) if VectorStore else None")
+                    self._emit(f"self._retrieval_top_k = {top_k}")
+                    self._emit(f"self._retrieval_min_similarity = {min_similarity!r}")
                 if getattr(model, "uncertainty", "none") in ("epistemic", "aleatoric", "full"):
                     self._emit(f'self._belief_tracker = BeliefTracker(mode="{model.uncertainty}") if BeliefTracker else None')
                 const_name = getattr(model, "constitution", None)
@@ -94,8 +105,10 @@ class PyTorchCodegen:
             k = layer.config.get("top_k", 2)
             d = layer.config.get("expert_dim", 4096)
             self._emit(f"self.{layer.name}_experts = nn.ModuleList([nn.Linear({d}, {d}) for _ in range({n})])")
-            self._emit(f"self.{layer.name}_router = nn.Linear({d}, {n})")
+            self._emit(f"self.{layer.name}_router = nn.Linear({d}, {n}, bias=False)")
             self._emit(f"self._{layer.name}_top_k = {k}")
+            self._emit(f"self._{layer.name}_aux_weight = {layer.config.get('aux_loss_weight', 0.01)}")
+            self._emit(f"self._{layer.name}_router_noise = nn.Parameter(torch.zeros(1, {n}))")
             return
         pt_cls = _LAYER_MAP.get(kind, f"nn.Identity  # unknown: {kind}")
         if kind in ("Dense", "Linear", "Embedding") and layer.in_dim and layer.out_dim:
@@ -123,12 +136,27 @@ class PyTorchCodegen:
             if layer.kind == "MoE":
                 name = layer.name
                 nxt = f"h_{name}"
+                self._emit(f"# MoE: top_k routing with BetaDist uncertainty + aux load-balance loss")
                 self._emit(f"_router_logits = self.{name}_router({prev})")
+                self._emit(f"# Add router noise for exploration (BetaDist-style)")
+                self._emit(f"_router_noise = torch.randn_like(_router_logits) * torch.abs(self._{name}_router_noise)")
+                self._emit(f"_router_logits = _router_logits + _router_noise")
                 self._emit(f"_topk = torch.topk(_router_logits, self._{name}_top_k, dim=-1)")
+                self._emit(f"# BetaDist uncertainty: compute variance over routing probs")
+                self._emit(f"_probs = torch.softmax(_router_logits, dim=-1)")
+                self._emit(f"_{name}_variance = (_probs * (1 - _probs)).sum(dim=-1).detach()  # Bernoulli variance")
                 self._emit(f"{nxt} = torch.zeros_like({prev})")
                 self._emit(f"for _i, _expert in enumerate(self.{name}_experts):")
                 self._emit(f"    _mask = (_topk.indices == _i).any(dim=-1, keepdim=True).float()")
                 self._emit(f"    {nxt} = {nxt} + _mask * _expert({prev})")
+                self._emit(f"# Aux loss for load balancing: encourage uniform expert usage")
+                self._emit(f"if self.training:")
+                n_experts = layer.config.get("n_experts", 8)
+                self._emit(f"    _expert_counts = torch.bincount(_topk.indices.reshape(-1), minlength={n_experts}).float()")
+                self._emit(f"    _expert_probs = _expert_counts / _expert_counts.sum().clamp_min(1.0)")
+                self._emit(f"    _target = torch.full_like(_expert_probs, 1.0 / {n_experts})")
+                self._emit(f"    _load_loss = self._{name}_aux_weight * torch.mean((_expert_probs - _target) ** 2)")
+                self._emit(f"    self._aux_losses.append(_load_loss)")
                 prev = nxt
             elif getattr(layer, "repeat", 1) > 1:
                 nxt = f"h_{layer.name}"

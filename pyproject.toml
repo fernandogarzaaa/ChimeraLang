@@ -1,19 +1,42 @@
 [project]
 name = "chimeralang"
 version = "0.1.0"
-description = "A programming language designed for AI cognition — probabilistic types, quantum consensus, directed hallucination."
+description = "A programming language designed for AI cognition: probabilistic types, quantum consensus, and directed hallucination."
+readme = "README.md"
 requires-python = ">=3.11"
-license = {text = "MIT"}
+license = "MIT"
+authors = [{name = "Fernando Garza"}]
+keywords = ["language", "compiler", "ai", "uncertainty", "ml"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development :: Compilers",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["build>=1", "pytest>=8"]
+ml = ["torch>=2"]
+vector = ["numpy>=1.26"]
+
+[project.urls]
+Homepage = "https://github.com/fernandogarzaaa/ChimeraLang"
+Repository = "https://github.com/fernandogarzaaa/ChimeraLang"
+Roadmap = "https://github.com/fernandogarzaaa/ChimeraLang/tree/main/docs/roadmap"
 
 [project.scripts]
 chimera = "chimera.cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+include = ["chimera*", "chimera_runtime*"]

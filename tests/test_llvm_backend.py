@@ -1,0 +1,397 @@
+"""Tests for the LLVM IR backend (Phase 2).
+
+Verifies that the emitter produces structurally valid LLVM IR:
+- Header declarations, target triple, data layout
+- Dense layer emits matrix-vector multiply loops
+- ReLU emits element-wise select
+- Softmax emits exp/sum/divide loops with max subtraction
+- LayerNorm emits mean+variance+normalize passes
+- Training loops emit properly structured epoch/batch nested loops
+- Chain dimension validation catches mismatches
+"""
+
+import textwrap
+from chimera.ast_nodes import (
+    LayerDecl,
+    LossConfig,
+    ModelDecl,
+    OptimizerConfig,
+    TrainStmt,
+)
+from chimera.compiler.llvm_backend import LLVMEmitter
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def emit_model(layers, name="TestModel") -> str:
+    model = ModelDecl(name=name, layers=layers)
+    emitter = LLVMEmitter()
+    return emitter.emit(model)
+
+
+def emit_training(
+    model_name="TestModel",
+    epochs=3,
+    batch_size=16,
+    opt_name="Adam",
+    loss_name="CrossEntropy",
+) -> str:
+    train = TrainStmt(
+        model_name=model_name,
+        dataset="mnist",
+        epochs=epochs,
+        batch_size=batch_size,
+        optimizer=OptimizerConfig(name=opt_name),
+        loss=LossConfig(name=loss_name),
+    )
+    emitter = LLVMEmitter()
+    emitter.emit(train)
+    return "\n".join(emitter._lines)
+
+
+# ---------------------------------------------------------------------------
+# Header / module structure
+# ---------------------------------------------------------------------------
+
+
+class TestLLVMHeader:
+    def test_emits_module_id_comment(self):
+        out = emit_model([])
+        assert 'source_filename = "chimeralang.module"' in out
+
+    def test_emits_target_triple(self):
+        out = emit_model([])
+        assert 'target triple = "x86_64-unknown-linux-gnu"' in out
+
+    def test_emits_data_layout(self):
+        out = emit_model([])
+        assert "target datalayout" in out
+
+    def test_emits_expf_declaration(self):
+        out = emit_model([])
+        assert 'declare float @expf(float)' in out
+
+    def test_emits_sqrtf_declaration(self):
+        out = emit_model([])
+        assert 'declare float @sqrtf(float)' in out
+
+    def test_emits_tanhf_declaration(self):
+        out = emit_model([])
+        assert 'declare float @tanhf(float)' in out
+
+    def test_empty_model_emits_forward_function(self):
+        out = emit_model([])
+        assert "@TestModel_forward" in out
+
+    def test_empty_model_ret_null_or_val(self):
+        out = emit_model([])
+        # Empty model returns null pointer (loaded into %0 first)
+        assert "ret float*" in out and "null" in out
+
+
+# ---------------------------------------------------------------------------
+# Dense layer
+# ---------------------------------------------------------------------------
+
+
+class TestDenseLayer:
+    def test_dense_emits_alloc_output(self):
+        layers = [LayerDecl(name="dense1", kind="Dense", in_dim=784, out_dim=256)]
+        out = emit_model(layers)
+        assert "alloca float, i64 256" in out
+
+    def test_dense_emits_comment(self):
+        layers = [LayerDecl(name="dense1", kind="Dense", in_dim=784, out_dim=256)]
+        out = emit_model(layers)
+        assert "; Dense 784 -> 256" in out
+
+    def test_dense_emits_loop_labels(self):
+        layers = [LayerDecl(name="l1", kind="Dense", in_dim=128, out_dim=64)]
+        out = emit_model(layers)
+        assert "dense.j" in out
+        assert "dense.j.end" in out
+
+    def test_dense_2d_chain(self):
+        layers = [
+            LayerDecl(name="dense1", kind="Dense", in_dim=784, out_dim=256),
+            LayerDecl(name="dense2", kind="Dense", in_dim=256, out_dim=128),
+        ]
+        out = emit_model(layers)
+        assert "; Dense 784 -> 256" in out
+        assert "; Dense 256 -> 128" in out
+
+
+# ---------------------------------------------------------------------------
+# Activation layers
+# ---------------------------------------------------------------------------
+
+
+class TestActivationLayers:
+    def test_relu_emits_alloca(self):
+        layers = [LayerDecl(name="relu1", kind="ReLU", in_dim=256, out_dim=256)]
+        out = emit_model(layers)
+        assert "relu_out" in out
+        assert "fcmp oge" in out  # x >= 0 check
+
+    def test_relu_emits_select(self):
+        layers = [LayerDecl(name="relu1", kind="ReLU", in_dim=256, out_dim=256)]
+        out = emit_model(layers)
+        assert "select i1" in out
+
+    def test_relu_emits_loop(self):
+        layers = [LayerDecl(name="relu1", kind="ReLU", in_dim=256, out_dim=256)]
+        out = emit_model(layers)
+        assert "relu.loop" in out
+
+    def test_softmax_emits_expf_call(self):
+        layers = [LayerDecl(name="soft1", kind="Softmax", in_dim=10, out_dim=10)]
+        out = emit_model(layers)
+        assert "@expf(float" in out
+
+    def test_softmax_emits_three_passes(self):
+        layers = [LayerDecl(name="soft1", kind="Softmax", in_dim=10, out_dim=10)]
+        out = emit_model(layers)
+        # Three named loop sections: max, sum, out
+        assert "softmax.max" in out
+        assert "softmax.sum" in out
+        assert "softmax.out" in out
+
+    def test_sigmoid_emits_expf_call(self):
+        layers = [LayerDecl(name="sig1", kind="Sigmoid", in_dim=128, out_dim=128)]
+        out = emit_model(layers)
+        assert "@expf(float" in out
+
+    def test_tanh_emits_tanhf_call(self):
+        layers = [LayerDecl(name="tanh1", kind="Tanh", in_dim=128, out_dim=128)]
+        out = emit_model(layers)
+        assert "@tanhf(float" in out
+
+    def test_gelu_emits_sqrtf_call(self):
+        layers = [LayerDecl(name="gelu1", kind="GELU", in_dim=128, out_dim=128)]
+        out = emit_model(layers)
+        assert "@sqrtf(float" in out
+
+
+# ---------------------------------------------------------------------------
+# Dropout / LayerNorm
+# ---------------------------------------------------------------------------
+
+
+class TestNormalizationLayers:
+    def test_dropout_emits_alloc(self):
+        layers = [LayerDecl(name="drop1", kind="Dropout", in_dim=256, out_dim=256)]
+        out = emit_model(layers)
+        assert "dropout_out" in out
+
+    def test_dropout_uses_probability_from_config(self):
+        layers = [
+            LayerDecl(
+                name="drop1",
+                kind="Dropout",
+                in_dim=256,
+                out_dim=256,
+                config={"p": 0.2},
+            )
+        ]
+        out = emit_model(layers)
+        assert "p=0.2" in out
+
+    def test_layernorm_emits_mean_pass(self):
+        layers = [LayerDecl(name="ln1", kind="LayerNorm", in_dim=128, out_dim=128)]
+        out = emit_model(layers)
+        assert "ln.mean" in out
+
+    def test_layernorm_emits_var_pass(self):
+        layers = [LayerDecl(name="ln1", kind="LayerNorm", in_dim=128, out_dim=128)]
+        out = emit_model(layers)
+        assert "ln.var" in out
+
+    def test_layernorm_emits_normalize_pass(self):
+        layers = [LayerDecl(name="ln1", kind="LayerNorm", in_dim=128, out_dim=128)]
+        out = emit_model(layers)
+        assert "ln.out" in out
+
+
+# ---------------------------------------------------------------------------
+# Training loop
+# ---------------------------------------------------------------------------
+
+
+class TestTrainingLoop:
+    def test_train_emits_function(self):
+        out = emit_training(model_name="MyModel", epochs=1, batch_size=1)
+        assert "@MyModel_train" in out
+
+    def test_train_declares_num_batches_param(self):
+        out = emit_training(model_name="MyModel")
+        assert "%num_batches" in out
+
+    def test_train_emits_epoch_loop(self):
+        out = emit_training(model_name="MyModel", epochs=5)
+        assert "epoch.loop" in out
+        assert "epoch.end" in out
+
+    def test_train_includes_optimizer_comment(self):
+        out = emit_training(model_name="MyModel", opt_name="SGD")
+        assert "optimizer=SGD" in out
+
+    def test_train_includes_loss_comment(self):
+        out = emit_training(model_name="MyModel", loss_name="MSE")
+        assert "loss=MSE" in out
+
+    def test_train_includes_batch_size_in_comment(self):
+        out = emit_training(model_name="M", batch_size=64)
+        assert "batch_size=64" in out
+
+    def test_train_ret_void(self):
+        out = emit_training(model_name="MyModel")
+        assert "ret void" in out
+
+
+# ---------------------------------------------------------------------------
+# Dimension validation
+# ---------------------------------------------------------------------------
+
+
+class TestDimensionValidation:
+    def test_validate_chain_catches_mismatch(self):
+        layers = [
+            LayerDecl(name="l1", kind="Dense", in_dim=784, out_dim=256),
+            LayerDecl(name="l2", kind="Dense", in_dim=128, out_dim=10),  # 256 != 128
+        ]
+        errors = LLVMEmitter.validate_chain(layers)
+        assert len(errors) == 1
+        assert "l1" in errors[0]
+        assert "l2" in errors[0]
+        assert "256" in errors[0]
+        assert "128" in errors[0]
+
+    def test_validate_chain_passes_correct_chain(self):
+        layers = [
+            LayerDecl(name="l1", kind="Dense", in_dim=784, out_dim=256),
+            LayerDecl(name="l2", kind="Dense", in_dim=256, out_dim=128),
+            LayerDecl(name="l3", kind="Dense", in_dim=128, out_dim=10),
+        ]
+        errors = LLVMEmitter.validate_chain(layers)
+        assert errors == []
+
+    def test_validate_chain_single_layer(self):
+        layers = [LayerDecl(name="l1", kind="Dense", in_dim=784, out_dim=10)]
+        errors = LLVMEmitter.validate_chain(layers)
+        assert errors == []
+
+    def test_validate_chain_partial_dims(self):
+        # Layers with missing dims should not error
+        layers = [
+            LayerDecl(name="l1", kind="ReLU", in_dim=None, out_dim=None),
+            LayerDecl(name="l2", kind="ReLU", in_dim=None, out_dim=None),
+        ]
+        errors = LLVMEmitter.validate_chain(layers)
+        assert errors == []
+
+    def test_validate_chain_missing_intermediate_dim(self):
+        layers = [
+            LayerDecl(name="l1", kind="Dense", in_dim=784, out_dim=256),
+            LayerDecl(name="l2", kind="ReLU", in_dim=None, out_dim=None),
+            LayerDecl(name="l3", kind="Dense", in_dim=256, out_dim=10),
+        ]
+        errors = LLVMEmitter.validate_chain(layers)
+        assert errors == []
+
+
+# ---------------------------------------------------------------------------
+# Shape inference
+# ---------------------------------------------------------------------------
+
+
+class TestShapeInference:
+    def test_infer_shapes_dense(self):
+        layers = [
+            LayerDecl(name="dense1", kind="Dense", in_dim=784, out_dim=256),
+        ]
+        shapes = LLVMEmitter.infer_tensor_shape(layers)
+        assert shapes["dense1"] == (784, 256)
+
+    def test_infer_shapes_chain(self):
+        layers = [
+            LayerDecl(name="dense1", kind="Dense", in_dim=784, out_dim=256),
+            LayerDecl(name="dense2", kind="Dense", in_dim=256, out_dim=128),
+        ]
+        shapes = LLVMEmitter.infer_tensor_shape(layers)
+        assert shapes["dense1"] == (784, 256)
+        assert shapes["dense2"] == (256, 128)
+
+    def test_infer_shapes_skips_missing_dims(self):
+        layers = [
+            LayerDecl(name="relu1", kind="ReLU", in_dim=None, out_dim=None),
+            LayerDecl(name="dense1", kind="Dense", in_dim=784, out_dim=256),
+        ]
+        shapes = LLVMEmitter.infer_tensor_shape(layers)
+        assert "dense1" in shapes
+        assert "relu1" not in shapes
+
+
+# ---------------------------------------------------------------------------
+# Full MLP model emission
+# ---------------------------------------------------------------------------
+
+
+class TestFullMLPEmission:
+    def test_mlp_784_256_128_10(self):
+        layers = [
+            LayerDecl(name="dense1", kind="Dense", in_dim=784, out_dim=256),
+            LayerDecl(name="relu1", kind="ReLU", in_dim=256, out_dim=256),
+            LayerDecl(name="dense2", kind="Dense", in_dim=256, out_dim=128),
+            LayerDecl(name="relu2", kind="ReLU", in_dim=128, out_dim=128),
+            LayerDecl(name="dense3", kind="Dense", in_dim=128, out_dim=10),
+            LayerDecl(name="soft1", kind="Softmax", in_dim=10, out_dim=10),
+        ]
+        out = emit_model(layers, name="MLP")
+        assert "@MLP_forward" in out
+        assert "; Dense 784 -> 256" in out
+        assert "; Dense 256 -> 128" in out
+        assert "; Dense 128 -> 10" in out
+        assert "relu.loop" in out
+        assert "softmax.max" in out
+        # Chain validation should pass
+        errors = LLVMEmitter.validate_chain(layers)
+        assert errors == []
+
+    def test_batch_training_loop(self):
+        layers = [
+            LayerDecl(name="dense1", kind="Dense", in_dim=784, out_dim=256),
+        ]
+        out = emit_model(layers, name="Simple")
+        train_out = emit_training(model_name="Simple", epochs=10, batch_size=64)
+        assert "epoch.loop" in train_out
+        assert "batch.loop" in train_out
+
+
+# ---------------------------------------------------------------------------
+# Unknown / passthrough layers
+# ---------------------------------------------------------------------------
+
+
+class TestUnknownLayers:
+    def test_unknown_layer_passthrough_emits_comment(self):
+        layers = [
+            LayerDecl(name="unknown1", kind="CustomOp", in_dim=128, out_dim=128),
+        ]
+        out = emit_model(layers)
+        assert "unknown layer CustomOp" in out
+
+    def test_moe_emits_comment(self):
+        layers = [
+            LayerDecl(
+                name="moe1",
+                kind="MoE",
+                in_dim=1024,
+                out_dim=1024,
+                config={"n_experts": 64, "top_k": 2},
+            )
+        ]
+        out = emit_model(layers)
+        assert "MoE: 64 experts" in out

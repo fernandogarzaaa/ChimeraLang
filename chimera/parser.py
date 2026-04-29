@@ -13,6 +13,7 @@ from chimera.ast_nodes import (
     BoolLiteral,
     CallExpr,
     CompareChain,
+    CausalModelDecl,
     ConstitutedType,
     ConstitutionDecl,
     Constraint,
@@ -22,6 +23,7 @@ from chimera.ast_nodes import (
     EvolveStmt,
     Expr,
     ExprStmt,
+    FederatedTrainStmt,
     FloatLiteral,
     FnDecl,
     ForbiddenConstraint,
@@ -41,23 +43,32 @@ from chimera.ast_nodes import (
     LossConfig,
     MatchArm,
     MatchExpr,
+    MemPtrType,
     MemberExpr,
     MemoryType,
+    MetaTrainStmt,
     ModelDecl,
     MoEBlock,
     MustConstraint,
     NamedType,
     OptimizerConfig,
     Param,
+    PredictiveCodingDecl,
     PrimitiveType,
     ProbabilisticType,
     Program,
     ReasonDecl,
     ResolveStmt,
+    RetrievalDecl,
     ReturnStmt,
+    ReplayBufferDecl,
+    RewardSystemDecl,
+    SelfImproveDecl,
     Statement,
     StringLiteral,
+    SwarmDecl,
     SymbolDecl,
+    SpikeTrainType,
     TensorType,
     TrainStmt,
     TypeExpr,
@@ -65,6 +76,7 @@ from chimera.ast_nodes import (
     ValDecl,
     VectorStoreType,
     GenericType,
+    MultimodalType,
 )
 from chimera.tokens import Token, TokenKind
 
@@ -167,6 +179,24 @@ class Parser:
             return self._parse_train()
         if kind == TokenKind.CONSTITUTION:
             return self._parse_constitution()
+        if kind == TokenKind.IDENT:
+            value = self._current().value
+            if value == "causal_model":
+                return self._parse_named_config_block(CausalModelDecl)
+            if value == "federated_train":
+                return self._parse_named_config_block(FederatedTrainStmt)
+            if value == "meta_train":
+                return self._parse_named_config_block(MetaTrainStmt)
+            if value == "self_improve":
+                return self._parse_named_config_block(SelfImproveDecl)
+            if value == "swarm":
+                return self._parse_named_config_block(SwarmDecl)
+            if value == "replay_buffer":
+                return self._parse_named_config_block(ReplayBufferDecl)
+            if value == "reward_system":
+                return self._parse_named_config_block(RewardSystemDecl)
+            if value == "predictive_coding":
+                return self._parse_named_config_block(PredictiveCodingDecl)
         return self._parse_statement()
 
     # ------------------------------------------------------------------
@@ -707,18 +737,21 @@ class Parser:
     def _parse_model(self) -> ModelDecl:
         self._expect(TokenKind.MODEL)
         name = self._expect(TokenKind.IDENT, "Expected model name").value
-        self._expect(TokenKind.LBRACE, "Expected '{'")
+        braced = self._match(TokenKind.LBRACE)
         self._expect_line_end()
-        layers = []; forward_fn = None; uncertainty = "none"; constitution = None; device = "cpu"
-        while not self._check(TokenKind.RBRACE) and not self._check(TokenKind.EOF):
+        terminator = TokenKind.RBRACE if braced else TokenKind.END
+        layers = []; forward_fn = None; retrieval = None; uncertainty = "none"; constitution = None; device = "cpu"
+        while not self._check(terminator) and not self._check(TokenKind.EOF):
             self._skip_newlines()
-            if self._check(TokenKind.RBRACE): break
+            if self._check(terminator): break
             if self._check(TokenKind.LAYER):
                 layers.append(self._parse_layer_decl())
             elif self._check(TokenKind.MOE):
                 layers.append(self._parse_moe_layer())
             elif self._check(TokenKind.FORWARD):
                 forward_fn = self._parse_forward_fn()
+            elif self._check(TokenKind.IDENT) and self._current().value == "retrieval":
+                retrieval = self._parse_retrieval_decl()
             elif self._check(TokenKind.IDENT) and self._current().value == "uncertainty":
                 self._advance(); self._expect(TokenKind.COLON); uncertainty = self._advance().value; self._expect_line_end()
             elif self._check(TokenKind.IDENT) and self._current().value == "constitution":
@@ -728,9 +761,9 @@ class Parser:
             else:
                 self._advance(); self._expect_line_end()
             self._skip_newlines()
-        self._expect(TokenKind.RBRACE, "Expected '}'")
+        self._expect(terminator, "Expected '}'" if braced else "Expected 'end'")
         self._expect_line_end()
-        return ModelDecl(name=name, layers=layers, forward_fn=forward_fn, uncertainty=uncertainty, constitution=constitution, device=device)
+        return ModelDecl(name=name, layers=layers, forward_fn=forward_fn, retrieval=retrieval, uncertainty=uncertainty, constitution=constitution, device=device)
 
     def _parse_layer_decl(self) -> LayerDecl:
         self._expect(TokenKind.LAYER)
@@ -759,7 +792,7 @@ class Parser:
         if self._check(TokenKind.LBRACE):
             config = self._parse_kv_block()
         self._expect_line_end()
-        return LayerDecl(name=name, kind="MoE", in_dim=None, out_dim=None, config=config)
+        return LayerDecl(name=name, kind="MoE", in_dim=None, out_dim=None, repeat=1, config=config)
 
     def _parse_forward_fn(self) -> ForwardFn:
         self._expect(TokenKind.FORWARD)
@@ -774,6 +807,9 @@ class Parser:
         self._expect(TokenKind.RPAREN)
         ret_type = None
         if self._match(TokenKind.ARROW): ret_type = self._parse_type()
+        if not self._check(TokenKind.LBRACE):
+            self._expect_line_end()
+            return ForwardFn(params=params, return_type=ret_type, body=[])
         self._expect(TokenKind.LBRACE); self._expect_line_end()
         body = []
         while not self._check(TokenKind.RBRACE) and not self._check(TokenKind.EOF):
@@ -829,6 +865,19 @@ class Parser:
             self._skip_newlines()
         self._expect(TokenKind.RBRACE); self._expect_line_end()
         return ConstitutionDecl(name=name, principles=principles, critique_rounds=critique_rounds, max_violation_score=max_violation)
+
+    def _parse_retrieval_decl(self) -> RetrievalDecl:
+        self._expect(TokenKind.IDENT, "Expected retrieval")
+        config = self._parse_kv_block()
+        self._expect_line_end()
+        return RetrievalDecl(config=config)
+
+    def _parse_named_config_block(self, node_cls):
+        self._advance()
+        name = self._expect(TokenKind.IDENT, "Expected declaration name").value
+        config = self._parse_kv_block()
+        self._expect_line_end()
+        return node_cls(name=name, config=config)
 
     def _parse_evolve_config(self) -> EvolveConfig:
         self._expect(TokenKind.EVOLVE)
@@ -1085,6 +1134,8 @@ class Parser:
                 while not self._check(TokenKind.RBRACKET) and not self._check(TokenKind.EOF):
                     if self._check(TokenKind.INT_LIT):
                         shape.append(int(self._advance().value))
+                    elif self._check(TokenKind.IDENT):
+                        shape.append(self._advance().value)
                     else:
                         self._advance(); shape.append(None)
                     self._match(TokenKind.COMMA)
@@ -1092,7 +1143,15 @@ class Parser:
             device = "cpu"
             if self._check(TokenKind.ON):
                 self._advance(); device = self._advance().value
-            return TensorType(dtype=dtype, shape=shape, device=device)
+            causality = None
+            privacy = None
+            while self._match(TokenKind.AT):
+                annotation = self._advance().value
+                if annotation == "private":
+                    privacy = self._parse_annotation_args()
+                else:
+                    causality = annotation
+            return TensorType(dtype=dtype, shape=shape, device=device, causality=causality, privacy=privacy)
         if tok.kind == TokenKind.VECTORSTORE_KW:
             self._advance()
             dim = 768
@@ -1104,6 +1163,37 @@ class Parser:
                 capacity = int(self._expect(TokenKind.INT_LIT).value)
                 self._expect(TokenKind.RBRACKET)
             return VectorStoreType(dim=dim, capacity=capacity)
+        if tok.kind == TokenKind.SPIKETRAIN_KW:
+            self._advance()
+            dtype = "Float"
+            if self._match(TokenKind.LT):
+                dtype = self._advance().value
+                self._expect(TokenKind.GT)
+            neurons = timesteps = None
+            if self._match(TokenKind.LBRACKET):
+                neurons = self._parse_dim_value()
+                if self._match(TokenKind.COMMA):
+                    timesteps = self._parse_dim_value()
+                self._expect(TokenKind.RBRACKET)
+            return SpikeTrainType(dtype=dtype, neurons=neurons, timesteps=timesteps)
+        if tok.kind == TokenKind.MULTIMODAL_KW:
+            self._advance()
+            inner = None
+            if self._match(TokenKind.LT):
+                inner = self._parse_type()
+                self._expect(TokenKind.GT)
+            return MultimodalType(inner_type=inner)
+        if tok.kind == TokenKind.MEMPTR_KW:
+            self._advance()
+            inner = None
+            if self._match(TokenKind.LT):
+                inner = self._parse_type()
+                self._expect(TokenKind.GT)
+            address = None
+            if self._match(TokenKind.LBRACKET):
+                address = self._parse_dim_value()
+                self._expect(TokenKind.RBRACKET)
+            return MemPtrType(inner_type=inner, address=address)
         if tok.kind == TokenKind.CONSTITUTED_KW:
             self._advance()
             inner = None
@@ -1113,6 +1203,31 @@ class Parser:
             return ConstitutedType(inner_type=inner)
 
         raise ParseError("Expected type expression", tok)
+
+    def _parse_dim_value(self) -> int | str | None:
+        if self._check(TokenKind.INT_LIT):
+            return int(self._advance().value)
+        if self._check(TokenKind.IDENT):
+            return self._advance().value
+        self._advance()
+        return None
+
+    def _parse_annotation_args(self) -> dict:
+        result = {}
+        self._expect(TokenKind.LPAREN)
+        while not self._check(TokenKind.RPAREN) and not self._check(TokenKind.EOF):
+            key = self._advance().value
+            if self._match(TokenKind.ASSIGN) or self._match(TokenKind.COLON):
+                tok = self._current()
+                if tok.kind == TokenKind.INT_LIT:
+                    result[key] = int(self._advance().value)
+                elif tok.kind == TokenKind.FLOAT_LIT:
+                    result[key] = float(self._advance().value)
+                else:
+                    result[key] = self._advance().value
+            self._match(TokenKind.COMMA)
+        self._expect(TokenKind.RPAREN)
+        return result
 
     # ------------------------------------------------------------------
     # Utility

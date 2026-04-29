@@ -342,11 +342,28 @@ class TensorType(TypeExpr):
     dtype: str = "Float"
     shape: list = field(default_factory=list)
     device: str = "cpu"
+    causality: "str | None" = None
+    privacy: "dict | None" = None
 
 @dataclass
 class VectorStoreType(TypeExpr):
     dim: int = 768
     capacity: int = 1_000_000
+
+@dataclass
+class SpikeTrainType(TypeExpr):
+    dtype: str = "Float"
+    neurons: int | str | None = None
+    timesteps: int | str | None = None
+
+@dataclass
+class MultimodalType(TypeExpr):
+    inner_type: "TypeExpr | None" = None
+
+@dataclass
+class MemPtrType(TypeExpr):
+    inner_type: "TypeExpr | None" = None
+    address: int | str | None = None
 
 @dataclass
 class ConstitutedType(TypeExpr):
@@ -392,6 +409,7 @@ class ModelDecl(Declaration):
     name: str = ""
     layers: list = field(default_factory=list)
     forward_fn: "ForwardFn | None" = None
+    retrieval: "RetrievalDecl | None" = None
     uncertainty: str = "none"
     constitution: "str | None" = None
     device: str = "cpu"
@@ -418,6 +436,14 @@ class MoEBlock(ASTNode):
     expert_dim: int = 4096
     config: dict = field(default_factory=dict)
 
+
+@dataclass
+class ExpertRoute(ASTNode):
+    """ExpertRoute<n_experts, top_k> — MoE routing decision with uncertainty."""
+    n_experts: int = 8
+    top_k: int = 2
+    uncertainty: float = 0.0  # BetaDist variance
+
 @dataclass
 class ConstitutionDecl(Declaration):
     name: str = ""
@@ -430,3 +456,57 @@ class ImportStmt(Statement):
     module: str = ""
     symbols: list = field(default_factory=list)
     alias: "str | None" = None
+
+
+@dataclass
+class RetrievalDecl(ASTNode):
+    """RAG retrieval configuration attached to a model."""
+    config: dict = field(default_factory=dict)
+
+
+@dataclass
+class CausalModelDecl(Declaration):
+    name: str = ""
+    config: dict = field(default_factory=dict)
+
+
+@dataclass
+class FederatedTrainStmt(Statement):
+    name: str = ""
+    config: dict = field(default_factory=dict)
+
+
+@dataclass
+class MetaTrainStmt(Statement):
+    name: str = ""
+    config: dict = field(default_factory=dict)
+
+
+@dataclass
+class SelfImproveDecl(Declaration):
+    name: str = ""
+    config: dict = field(default_factory=dict)
+
+
+@dataclass
+class SwarmDecl(Declaration):
+    name: str = ""
+    config: dict = field(default_factory=dict)
+
+
+@dataclass
+class ReplayBufferDecl(Declaration):
+    name: str = ""
+    config: dict = field(default_factory=dict)
+
+
+@dataclass
+class RewardSystemDecl(Declaration):
+    name: str = ""
+    config: dict = field(default_factory=dict)
+
+
+@dataclass
+class PredictiveCodingDecl(Declaration):
+    name: str = ""
+    config: dict = field(default_factory=dict)
