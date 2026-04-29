@@ -3,6 +3,13 @@ from chimera_runtime.belief_tracker import BeliefTracker
 from chimera_runtime.guard_layer import GuardLayer, GuardResult
 from chimera_runtime.constitution_layer import ConstitutionLayer, ConstitutionResult
 from chimera_runtime.vector_store import VectorStore
+from chimera_runtime.rag import (
+    HallucinationGuardedRAG,
+    HashingEmbedder,
+    RagCitation,
+    RagDocument,
+    RagResult,
+)
 from chimera_runtime.spike_runtime import (
     LIFConfig,
     LIFLayer,
@@ -32,6 +39,8 @@ from chimera_runtime.roadmap_systems import (
 
 __all__ = ["BeliefTracker", "GuardLayer", "GuardResult",
            "ConstitutionLayer", "ConstitutionResult", "VectorStore",
+           "HallucinationGuardedRAG", "HashingEmbedder", "RagCitation",
+           "RagDocument", "RagResult",
            "LIFConfig", "LIFLayer", "PoissonEncoder", "RateDecoder",
            "STDPDelta", "STDPDeltaConfig", "STDPUpdater", "SpikeTrain",
            "lif_simulation", "Agent", "GossipMessage", "SwarmConfig",

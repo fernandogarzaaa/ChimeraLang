@@ -3,6 +3,7 @@
 Usage:
   chimera run    <file>   Execute a .chimera program
   chimera check  <file>   Type-check without executing
+  chimera rag    <file>   Run hallucination-guarded RAG over a JSON corpus
   chimera lex    <file>   Dump token stream
   chimera parse  <file>   Dump AST
   chimera prove  <file>   Run + generate integrity report
@@ -198,6 +199,62 @@ def cmd_compile(path: str, backend: str = "pytorch", out: str | None = None) -> 
         print(code)
 
 
+def cmd_rag(
+    path: str,
+    *,
+    query: str,
+    top_k: int = 3,
+    min_similarity: float = 0.25,
+    as_json: bool = False,
+) -> None:
+    """Run hallucination-guarded RAG over a JSON corpus."""
+    from chimera_runtime import HallucinationGuardedRAG
+
+    p = Path(path)
+    if not p.exists():
+        print(f"chimera: error: corpus not found: {p}", file=sys.stderr)
+        sys.exit(1)
+    if not query.strip():
+        print("chimera: rag requires --query=TEXT", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        documents = json.loads(p.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as e:
+        print(f"chimera: invalid corpus JSON: {e}", file=sys.stderr)
+        sys.exit(1)
+    if not isinstance(documents, list):
+        print("chimera: corpus must be a JSON array of documents", file=sys.stderr)
+        sys.exit(1)
+
+    rag = HallucinationGuardedRAG(top_k=top_k, min_similarity=min_similarity)
+    try:
+        rag.index(documents)
+        result = rag.answer(query, top_k=top_k)
+    except ValueError as e:
+        print(f"chimera: rag error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if as_json:
+        print(json.dumps(result.to_dict(), indent=2))
+        if not result.passed:
+            sys.exit(1)
+        return
+
+    print(result.answer)
+    print(f"\nconfidence={result.confidence:.3f} variance={result.variance:.4f} passed={result.passed}")
+    if result.citations:
+        print("\nCitations:")
+        for citation in result.citations:
+            print(f"  - {citation.document_id} score={citation.score:.3f}")
+    if result.violations:
+        print("\nGuard violations:")
+        for violation in result.violations:
+            print(f"  - {violation}")
+    if not result.passed:
+        sys.exit(1)
+
+
 def cmd_prove(path: str) -> None:
     """Execute + full integrity report."""
     source = _read_source(path)
@@ -333,12 +390,19 @@ Usage:
   chimera prove   <file.chimera>                   Run + integrity report
   chimera compile <file.chimera> [--backend=pytorch] [--out=file.py]
                                                    Compile to PyTorch Python
+  chimera rag     <corpus.json> --query=TEXT [--top-k=N] [--min-similarity=N] [--json]
+                                                   Run hallucination-guarded RAG
   chimera repl                                     Interactive REPL
 
 Options:
   --trace           Show reasoning trace (with run)
   --backend=NAME    Compilation backend (default: pytorch)
   --out=FILE        Write compiled output to file instead of stdout
+  --query=TEXT      RAG query
+  --top-k=N         RAG retrieval count (default: 3)
+  --min-similarity=N
+                   Minimum retrieval similarity (default: 0.25)
+  --json            Emit JSON for RAG
   --help            Show this message
 """
 
@@ -377,6 +441,13 @@ def main() -> None:
             filepath,
             backend=next((a.split("=")[1] for a in flag_args if a.startswith("--backend=")), "pytorch"),
             out=next((a.split("=")[1] for a in flag_args if a.startswith("--out=")), None),
+        ),
+        "rag": lambda: cmd_rag(
+            filepath,
+            query=next((a.split("=", 1)[1] for a in flag_args if a.startswith("--query=")), ""),
+            top_k=int(next((a.split("=", 1)[1] for a in flag_args if a.startswith("--top-k=")), "3")),
+            min_similarity=float(next((a.split("=", 1)[1] for a in flag_args if a.startswith("--min-similarity=")), "0.25")),
+            as_json="--json" in flag_args,
         ),
     }
 

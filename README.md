@@ -44,6 +44,7 @@ ChimeraLang has three backward-compatible execution paths:
 | **CIR path** | Any `belief` declaration | `belief`, `inquire`, `resolve`, `guard`, `evolve`, `symbol` |
 | **VM path** | All other programs | `fn`, `gate`, `goal`, `reason`, `val`, `for`, `match` |
 | **Compiler path** | `chimera compile` | `model`, `layer`, `train`, `constitution`, `retrieval`, `MoE`, roadmap declarations |
+| **RAG path** | `chimera rag` | JSON corpus retrieval, cited extractive answers, confidence guards, constitution checks |
 
 Existing programs run identically. New CIR programs are automatically routed.
 
@@ -222,10 +223,35 @@ python -m chimera.cli run    <file> [--trace] [--save-symbols=out.json] [--load-
 python -m chimera.cli check  <file>          # Type-check without running
 python -m chimera.cli prove  <file>          # Run + generate integrity proof
 python -m chimera.cli compile <file> [--backend=pytorch|llvm] [--out=file]
+python -m chimera.cli rag <corpus.json> --query="..." [--json]
 python -m chimera.cli parse  <file>          # Print AST
 python -m chimera.cli lex    <file>          # Print token stream
 python -m chimera.cli repl                   # Interactive REPL
 ```
+
+---
+
+## Hallucination-Guarded RAG
+
+ChimeraLang includes a local RAG runtime for grounded answers with citations and guard results:
+
+```bash
+python -m chimera.cli rag examples/rag_corpus.json --query="How does ChimeraLang ground RAG answers?" --json
+```
+
+The corpus is a JSON array of documents:
+
+```json
+[
+  {
+    "id": "retrieval",
+    "text": "RAG answers should cite retrieved documents.",
+    "metadata": {"source": "runtime"}
+  }
+]
+```
+
+The runtime uses deterministic hashing embeddings, `VectorStore` retrieval, extractive answer synthesis, `GuardLayer` confidence/variance checks, and `ConstitutionLayer` safety checks. If retrieval is weak, the answer is refused instead of hallucinated.
 
 ---
 

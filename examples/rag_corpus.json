@@ -1,0 +1,26 @@
+[
+  {
+    "id": "beliefs",
+    "text": "ChimeraLang represents uncertain claims as belief distributions. Guard checks inspect confidence and variance before an answer is accepted.",
+    "metadata": {
+      "source": "README",
+      "topic": "beliefs"
+    }
+  },
+  {
+    "id": "retrieval",
+    "text": "The ChimeraLang runtime includes VectorStore retrieval for grounding model behavior in indexed context. RAG answers should cite retrieved documents.",
+    "metadata": {
+      "source": "runtime",
+      "topic": "retrieval"
+    }
+  },
+  {
+    "id": "constitution",
+    "text": "ConstitutionLayer applies safety principles to generated text and blocks content that violates configured rules.",
+    "metadata": {
+      "source": "runtime",
+      "topic": "safety"
+    }
+  }
+]
