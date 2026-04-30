@@ -1,7 +1,12 @@
-"""LLVM IR backend for ChimeraLang.
+"""LLVM IR backend for ChimeraLang (experimental scaffolding).
 
-Emits LLVM IR from ChimeraLang AST for the native compiler path (Phase 2).
-Supports Dense, ReLU, Softmax, Dropout, LayerNorm, and training loops.
+Emits LLVM IR text from ChimeraLang AST for the native compiler path
+(Phase 2). The current emitter produces a structural skeleton — function
+signatures, basic-block labels, and per-layer commentary — that captures
+the model architecture but is NOT YET guaranteed to assemble cleanly under
+``llvm-as``. Several layer bodies reference SSA values whose definitions
+are pending. Treat the output as documentation-grade IR scaffolding until
+the layer emitters are completed.
 """
 
 from __future__ import annotations
@@ -163,7 +168,7 @@ class LLVMEmitter:
         # Emit parameters
         params = self._model_param_sig()
         self._emit(f"  {params}")
-        self._emit(") {{")
+        self._emit(") {")
         with self._indented():
             self._emit("entry:")
             self._gen_forward_body(model)
@@ -837,7 +842,7 @@ class LLVMEmitter:
         self._emit(f"define void @{_sanitize(model_name)}_train(")
         self._emit("  float* %model_params,")
         self._emit(f"  i64 %num_batches")
-        self._emit(") {{")
+        self._emit(") {")
         with self._indented():
             self._emit("entry:")
             self._emit(f"; epochs={epochs}, batch_size={batch_size}, optimizer={opt_name}, loss={loss_name}")

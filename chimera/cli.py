@@ -359,7 +359,8 @@ def cmd_repl() -> None:
             accumulated = []
 
 
-
+def _print_node(node: object, indent: int = 0) -> None:
+    """Recursively print an AST node with indentation."""
     prefix = "  " * indent
     name = type(node).__name__
     print(f"{prefix}{name}", end="")
