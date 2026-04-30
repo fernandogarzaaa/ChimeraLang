@@ -1,4 +1,19 @@
-"""Runtime primitives for ChimeraLang roadmap systems."""
+"""Runtime primitives for ChimeraLang roadmap systems.
+
+The classes below fall into two groups:
+
+* DifferentialPrivacyEngine, ReplayBuffer, RewardSystem,
+  PredictiveCodingRuntime, ConstitutionLayer (in constitution_layer.py)
+  — minimum-viable but real implementations.
+
+* CausalModel, MetaLearner, SelfImprover — surface-level facades. They
+  validate constructor arguments and check structural invariants
+  (e.g. SelfImprover refuses forbidden ops) but do NOT yet run real
+  causal inference, gradient adaptation, or formal verification.
+  Their results carry ``is_stub=True`` (or, for SelfImprover,
+  ``verified=False`` plus ``verifier_invoked=False``) so callers can
+  branch on stub status instead of trusting a false-positive payload.
+"""
 from __future__ import annotations
 
 import math
@@ -9,6 +24,13 @@ from typing import Any
 
 @dataclass
 class CausalModel:
+    """Structural facade — does NOT compute causal effects.
+
+    Returns a record describing the requested intervention and adjustment
+    set; ``is_stub=True`` is included so callers can detect that no
+    estimation has actually been performed.
+    """
+
     name: str
     adjustment: str = "backdoor"
 
@@ -18,6 +40,8 @@ class CausalModel:
             "intervention": intervention,
             "adjustment": self.adjustment,
             "adjust_for": adjust_for or [],
+            "effect_estimate": None,
+            "is_stub": True,
         }
 
 
@@ -57,6 +81,13 @@ class DifferentialPrivacyEngine:
 
 @dataclass
 class MetaLearner:
+    """Structural facade — does NOT perform real adaptation.
+
+    Returns the adaptation configuration; ``is_stub=True`` and
+    ``weights_updated=False`` mark that no inner-loop gradient steps
+    were actually taken.
+    """
+
     base_model: str
     inner_steps: int = 5
     lr: float = 0.01
@@ -67,11 +98,23 @@ class MetaLearner:
             "examples": new_task_examples,
             "inner_steps": steps or self.inner_steps,
             "lr": self.lr,
+            "weights_updated": False,
+            "is_stub": True,
         }
 
 
 @dataclass
 class SelfImprover:
+    """Mutation gate — only the forbidden-ops check is real.
+
+    The ``verifier`` field records the *intended* verifier (e.g.
+    ``z3_solver``) but no verifier is actually invoked. The result
+    therefore reports ``verified=False`` and ``verifier_invoked=False``
+    alongside the real ``forbidden_op_check_passed`` signal. Callers
+    that require formal verification should treat this as advisory
+    until a verifier is wired in.
+    """
+
     model: str
     verifier: str = "z3_solver"
     max_generations: int = 100
@@ -89,7 +132,9 @@ class SelfImprover:
             "model": self.model,
             "mutation": mutation,
             "verifier": self.verifier,
-            "verified": True,
+            "verifier_invoked": False,
+            "forbidden_op_check_passed": True,
+            "verified": False,
         }
 
 

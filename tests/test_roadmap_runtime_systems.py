@@ -8,6 +8,10 @@ def test_causal_model_records_adjustment_strategy():
     assert result["model"] == "ChimeraCausal"
     assert result["adjustment"] == "backdoor"
     assert result["adjust_for"] == ["z"]
+    # CausalModel is a structural facade — make sure the result is
+    # honest about that so callers don't trust an unsupported estimate.
+    assert result["is_stub"] is True
+    assert result["effect_estimate"] is None
 
 
 def test_differential_privacy_engine_clips_and_tracks_budget():
@@ -31,8 +35,24 @@ def test_meta_learner_and_self_improver_return_auditable_records():
     proposal = improver.propose({"lr": 0.001})
 
     assert adapted["inner_steps"] == 5
-    assert proposal["verified"] is True
+    # MetaLearner is a structural facade — no real adaptation happens.
+    assert adapted["is_stub"] is True
+    assert adapted["weights_updated"] is False
+    # SelfImprover only runs the forbidden-op check; no verifier is
+    # actually invoked yet, so verified must be False (not a lying True).
     assert proposal["verifier"] == "z3_solver"
+    assert proposal["verifier_invoked"] is False
+    assert proposal["verified"] is False
+    assert proposal["forbidden_op_check_passed"] is True
+
+
+def test_self_improver_still_blocks_forbidden_ops():
+    from chimera_runtime import SelfImprover
+    import pytest
+
+    improver = SelfImprover(model="X", forbidden_ops=["delete_safety_layer"])
+    with pytest.raises(ValueError):
+        improver.propose({"op": "delete_safety_layer"})
 
 
 def test_biological_runtime_primitives_record_state():
