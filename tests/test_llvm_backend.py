@@ -8,9 +8,16 @@ Verifies that the emitter produces structurally valid LLVM IR:
 - LayerNorm emits mean+variance+normalize passes
 - Training loops emit properly structured epoch/batch nested loops
 - Chain dimension validation catches mismatches
+- Emitted IR is free of accidental brace literals (`{{` / `}}`) and, when
+  the `llvm-as` binary is available, parses cleanly through it.
 """
 
+import shutil
+import subprocess
 import textwrap
+
+import pytest
+
 from chimera.ast_nodes import (
     LayerDecl,
     LossConfig,
@@ -395,3 +402,87 @@ class TestUnknownLayers:
         ]
         out = emit_model(layers)
         assert "MoE: 64 experts" in out
+
+
+# ---------------------------------------------------------------------------
+# IR validity — catches f-string brace mistakes and (when llvm-as is on
+# PATH) any deeper structural breakage in emitted IR.
+# ---------------------------------------------------------------------------
+
+
+def _all_emitter_outputs() -> list[tuple[str, str]]:
+    """Produce a representative set of (label, ir_text) snapshots."""
+    snapshots: list[tuple[str, str]] = []
+
+    snapshots.append((
+        "dense_relu_softmax",
+        emit_model([
+            LayerDecl(name="d1", kind="Dense", in_dim=784, out_dim=128),
+            LayerDecl(name="a1", kind="ReLU", in_dim=128, out_dim=128),
+            LayerDecl(name="d2", kind="Dense", in_dim=128, out_dim=10),
+            LayerDecl(name="s1", kind="Softmax", in_dim=10, out_dim=10),
+        ]),
+    ))
+
+    snapshots.append((
+        "layernorm_only",
+        emit_model([
+            LayerDecl(name="ln1", kind="LayerNorm", in_dim=64, out_dim=64),
+        ]),
+    ))
+
+    snapshots.append((
+        "training_loop",
+        emit_training(epochs=2, batch_size=8),
+    ))
+
+    return snapshots
+
+
+class TestIRValidity:
+    """Regression tests for emitted IR shape.
+
+    The cheap brace check would have caught the `") {{"` typo in the forward
+    and train function bodies (bug #3 from the audit). The llvm-as check,
+    when available, validates the full module — anyone running the suite in
+    CI with LLVM installed will catch deeper regressions for free.
+    """
+
+    @pytest.mark.parametrize("label,ir", _all_emitter_outputs(), ids=lambda x: x if isinstance(x, str) else "")
+    def test_no_unescaped_double_braces(self, label, ir):
+        # Skip the parametrized id pair (pytest passes both elements through
+        # the ids lambda; we want the (label, ir) form here).
+        assert "{{" not in ir, (
+            f"emitted IR for {label!r} contains '{{{{' — likely an f-string "
+            f"escaping bug like the one fixed in bug #3"
+        )
+        assert "}}" not in ir, (
+            f"emitted IR for {label!r} contains '}}}}' — likely an f-string "
+            f"escaping bug"
+        )
+
+    @pytest.mark.parametrize("label,ir", _all_emitter_outputs(), ids=lambda x: x if isinstance(x, str) else "")
+    def test_llvm_as_accepts_ir(self, label, ir, tmp_path):
+        llvm_as = shutil.which("llvm-as")
+        if llvm_as is None:
+            pytest.skip("llvm-as not on PATH; install LLVM to enable IR validation")
+
+        # The standalone train-loop snapshot is a function body fragment
+        # without the enclosing module header, so llvm-as can't parse it
+        # by itself — the brace check above is sufficient for that case.
+        if not ir.lstrip().startswith(("target ", "; ModuleID", "source_filename")):
+            pytest.skip(f"{label} is a function-body fragment, not a full module")
+
+        ll_path = tmp_path / f"{label}.ll"
+        ll_path.write_text(ir)
+        result = subprocess.run(
+            [llvm_as, str(ll_path), "-o", str(tmp_path / f"{label}.bc")],
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode == 0, (
+            f"llvm-as rejected {label} IR:\n"
+            f"--- stderr ---\n{result.stderr}\n"
+            f"--- ir (first 80 lines) ---\n"
+            + "\n".join(ir.splitlines()[:80])
+        )
