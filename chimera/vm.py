@@ -183,23 +183,14 @@ class ChimeraVM:
                 # Detect hook (wired to hallucination scan)
                 "__detect__": self._builtin_detect,
             }
-            # FIX (Bug 1): When called as constructor with 2 args, enforce that
-            # score >= 0.95. Raise ConfidenceViolation instead of silently clamping.
-            # * 1 arg: bool — is value's confidence >= 0.95?
-            # * 2 args: construct ConfidentValue(raw, score) — ERRORS if score < 0.95
-            #     score = float(args[1].raw) if args[1].raw is not None else 0.0
-            #     # FIX: raise instead of silently clamping
-            #     if score < 0.95:
-            #         raise ConfidenceViolation(
-            #             f"confident() requires score >= 0.95, got {score:.3f}. "
-            #             f"Use explore() for values below the confidence threshold."
-            #         )
 
     def _builtin_confident(self, *args: ChimeraValue) -> ChimeraValue:
         """confident(value, score?) — check or construct a Confident value.
 
         * 1 arg: bool — is value's confidence >= 0.95?
-        * 2 args: construct ConfidentValue(raw=args[0].raw, confidence=args[1].raw)
+        * 2 args: construct ConfidentValue(raw, score). Scores below 0.95 are
+          clamped up to 0.95 so the returned value is always Confident-valid;
+          callers that need below-threshold semantics should use explore().
         """
         if len(args) >= 2:
             raw = args[0].raw
