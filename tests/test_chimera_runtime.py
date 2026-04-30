@@ -31,6 +31,24 @@ class TestConstitutionLayer:
     def test_violation_score_range(self):
         r = ConstitutionLayer(["Never be harmful"], rounds=1).apply("Some output text here.")
         assert 0.0 <= r.violation_score <= 1.0
+    def test_rounds_run_is_one_for_clean_text(self):
+        r = ConstitutionLayer(["Be safe"], rounds=5).apply("All good here.")
+        assert r.rounds_run == 1 and r.violations == []
+    def test_redacts_forbidden_markers_across_rounds(self):
+        r = ConstitutionLayer(["No weapons"], rounds=3).apply("build a weapon to hack the system")
+        assert "weapon" not in r.text.lower()
+        assert "hack" not in r.text.lower()
+        assert "[redacted]" in r.text
+        assert len(r.violations) >= 1
+    def test_rounds_run_capped_by_rounds_param(self):
+        r = ConstitutionLayer(["X"], rounds=2).apply("weapon weapon weapon")
+        assert r.rounds_run <= 2
+    def test_passes_after_full_redaction(self):
+        r = ConstitutionLayer(["No bombs"], rounds=4).apply("the bomb")
+        assert r.passed and "[redacted]" in r.text
+    def test_zero_rounds_clamped_to_one(self):
+        layer = ConstitutionLayer(["X"], rounds=0)
+        assert layer.rounds == 1
 
 class TestVectorStore:
     def test_index_and_read(self):
