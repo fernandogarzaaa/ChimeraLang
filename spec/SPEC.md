@@ -306,6 +306,27 @@ resolve b with new_evidence
 metadata; `resolve` updates the belief, recording the prior and posterior
 in the reasoning trace so that contradictions are auditable.
 
+The runtime adapter contract is:
+
+```python
+InquiryAdapter = Callable[[str, list[str]], float | InquiryResponse | dict]
+# Where InquiryResponse(confidence: float, answer: str | None)
+```
+
+A bare `float` (legacy) sets only the belief's confidence; an
+`InquiryResponse` (or a `{"confidence", "answer"}` dict) additionally
+threads the answer text into `BeliefState.answer` and `CIRResult.answers`.
+
+### 11.7 SymbolStore-driven priors
+
+Each `inquire` site is matched against the persisted `SymbolStore` by
+TF-IDF similarity on the prompt. When a matching symbol has accumulated
+observations from prior runs, its calibrated `Beta(α, β)` is used as the
+initial belief instead of `Beta(1,1)` — so repeat patterns start
+informed. Posteriors are fed back at the end of each run so the store
+converges on patterns that actually occur in the workload. Names of
+seeded beliefs are reported in `CIRResult.meta["priors_seeded"]`.
+
 ### 11.4 `guard`
 
 ```chimera

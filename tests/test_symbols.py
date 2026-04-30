@@ -133,3 +133,63 @@ class TestSymbolStore:
         initial = len(s1)
         s1.merge(s2)
         assert len(s1) >= initial
+
+
+class TestPriorSeeding:
+    """Symbol observations feed back into priors for future runs."""
+
+    def test_uninformed_store_returns_no_prior(self):
+        store = SymbolStore()
+        store.register(make_graph_a(), prompts=["What is gravity?"])
+        # Brand-new symbol with no observations => still Beta(1,1) =>
+        # find_prior_for must return None so the caller falls back to
+        # uniform.
+        assert store.find_prior_for("What is gravity?") is None
+
+    def test_record_observation_updates_prior(self):
+        store = SymbolStore()
+        store.register(make_graph_a(), prompts=["What is gravity?"])
+        # High-confidence posterior should pull the prior toward higher mean.
+        observed = BetaDist.from_confidence(0.92, strength=20.0)
+        sym = store.record_observation("What is gravity?", observed)
+        assert sym is not None
+        assert sym.prior_alpha > 1.0
+        assert sym.prior().mean > 0.7
+
+    def test_find_prior_for_returns_calibrated_prior(self):
+        store = SymbolStore()
+        store.register(make_graph_a(), prompts=["What is gravity?"])
+        store.record_observation(
+            "What is gravity?", BetaDist.from_confidence(0.9, strength=20.0)
+        )
+        # Semantically similar prompt should get the same prior.
+        prior = store.find_prior_for("What is gravity?")
+        assert prior is not None
+        assert prior.mean > 0.7
+
+    def test_dissimilar_prompt_gets_no_prior(self):
+        store = SymbolStore()
+        store.register(make_graph_a(), prompts=["What is gravity?"])
+        store.record_observation(
+            "What is gravity?", BetaDist.from_confidence(0.9, strength=20.0)
+        )
+        # Below similarity floor => no prior returned.
+        assert store.find_prior_for("Steam train repair manual") is None
+
+    def test_prior_survives_save_load_roundtrip(self):
+        store = SymbolStore()
+        store.register(make_graph_a(), prompts=["What is gravity?"])
+        store.record_observation(
+            "What is gravity?", BetaDist.from_confidence(0.88, strength=20.0)
+        )
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as f:
+            path = f.name
+        try:
+            store.save_symbols(path)
+            reloaded = SymbolStore()
+            reloaded.load_symbols(path)
+            prior = reloaded.find_prior_for("What is gravity?")
+            assert prior is not None
+            assert prior.mean > 0.7
+        finally:
+            os.unlink(path)

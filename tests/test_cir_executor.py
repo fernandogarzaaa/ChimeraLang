@@ -115,3 +115,48 @@ class TestReasoningTrace:
         executor = CIRExecutor(inquiry_adapter=mock_adapter)
         result = executor.run(graph)
         assert result.meta["node_count"] == 1
+
+
+class TestInquiryResponse:
+    """Adapter contract: float (legacy) and InquiryResponse (new) both work."""
+
+    def test_legacy_float_adapter_still_works(self):
+        graph, inq_id = _simple_graph()
+        graph.emit_ids = [inq_id]
+        executor = CIRExecutor(inquiry_adapter=lambda p, a: 0.82)
+        result = executor.run(graph)
+        assert result.beliefs["x"].mean == pytest.approx(0.82, abs=0.05)
+        # No answer text means result.answers stays empty.
+        assert "x" not in result.answers
+
+    def test_inquiry_response_threads_answer_text(self):
+        from chimera.cir.executor import InquiryResponse
+        graph, inq_id = _simple_graph()
+        graph.emit_ids = [inq_id]
+
+        def adapter(prompt: str, agents: list[str]) -> InquiryResponse:
+            return InquiryResponse(confidence=0.9, answer="42")
+
+        executor = CIRExecutor(inquiry_adapter=adapter)
+        result = executor.run(graph)
+        assert result.answers["x"] == "42"
+        assert graph.belief_store["x"].answer == "42"
+        assert result.beliefs["x"].mean == pytest.approx(0.9, abs=0.05)
+
+    def test_dict_adapter_response_is_normalized(self):
+        graph, inq_id = _simple_graph()
+        graph.emit_ids = [inq_id]
+        executor = CIRExecutor(
+            inquiry_adapter=lambda p, a: {"confidence": 0.6, "answer": "maybe"}
+        )
+        result = executor.run(graph)
+        assert result.answers["x"] == "maybe"
+        assert result.beliefs["x"].mean == pytest.approx(0.6, abs=0.05)
+
+    def test_garbage_adapter_response_falls_back_to_prior(self):
+        graph, inq_id = _simple_graph()
+        executor = CIRExecutor(inquiry_adapter=lambda p, a: object())
+        result = executor.run(graph)
+        # Falls back to 0.5 prior, no answer captured.
+        assert result.beliefs["x"].mean == pytest.approx(0.5, abs=0.05)
+        assert "x" not in result.answers

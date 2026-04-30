@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any, Callable, Union
 
 from chimera.cir.nodes import (
     BetaDist, BeliefState, CIRGraph, ConsensusNode,
@@ -20,13 +20,25 @@ from chimera.cir.nodes import (
 
 
 # ---------------------------------------------------------------------------
-# Result
+# Result / response types
 # ---------------------------------------------------------------------------
+
+@dataclass
+class InquiryResponse:
+    """Structured adapter response — the answer text plus its confidence.
+
+    Adapters may also return a bare ``float`` for backward compatibility;
+    in that case ``answer`` is left as ``None``.
+    """
+    confidence: float
+    answer: str | None = None
+
 
 @dataclass
 class CIRResult:
     beliefs: dict[str, BetaDist] = field(default_factory=dict)
     emitted: list[tuple[str, BetaDist]] = field(default_factory=list)
+    answers: dict[str, str] = field(default_factory=dict)
     trace: list[str] = field(default_factory=list)
     guard_violations: list[str] = field(default_factory=list)
     evolution_iters: int = 0
@@ -43,11 +55,30 @@ class GuardViolation(Exception):
 # Executor
 # ---------------------------------------------------------------------------
 
-InquiryAdapter = Callable[[str, list[str]], float]
+InquiryAdapter = Callable[[str, list[str]], Union[float, InquiryResponse]]
 
 
-def _default_mock_adapter(prompt: str, agents: list[str]) -> float:
-    return 0.75
+def _default_mock_adapter(prompt: str, agents: list[str]) -> InquiryResponse:
+    return InquiryResponse(confidence=0.75, answer=f"<mock answer for {prompt!r}>")
+
+
+def _normalize_response(raw: Any) -> InquiryResponse:
+    """Coerce an adapter's return value into InquiryResponse.
+
+    Accepts ``float``/``int``, ``InquiryResponse``, or a ``dict`` with at
+    least a ``confidence`` key. Anything else falls back to a 0.5 prior
+    so the run continues.
+    """
+    if isinstance(raw, InquiryResponse):
+        return raw
+    if isinstance(raw, (int, float)):
+        return InquiryResponse(confidence=float(raw), answer=None)
+    if isinstance(raw, dict) and "confidence" in raw:
+        return InquiryResponse(
+            confidence=float(raw["confidence"]),
+            answer=raw.get("answer"),
+        )
+    return InquiryResponse(confidence=0.5, answer=None)
 
 
 class CIRExecutor:
@@ -101,9 +132,13 @@ class CIRExecutor:
             if bs is not None:
                 result.emitted.append((bs.name, bs.distribution))
                 result.beliefs[bs.name] = bs.distribution
+                if bs.answer is not None:
+                    result.answers[bs.name] = bs.answer
 
         for name, bs in graph.belief_store.items():
             result.beliefs[name] = bs.distribution
+            if bs.answer is not None and name not in result.answers:
+                result.answers[name] = bs.answer
 
         result.duration_ms = (time.perf_counter() - start) * 1000
         result.meta["node_count"] = len(graph.nodes)
@@ -117,12 +152,12 @@ class CIRExecutor:
     def _exec_inquiry(self, node: InquiryNode, graph: CIRGraph, result: CIRResult) -> None:
         result.trace.append(f"[inquiry] prompt={node.prompt!r} agents={node.agents}")
         try:
-            conf = float(self._adapter(node.prompt, node.agents))
-            conf = max(0.0, min(1.0, conf))
+            response = _normalize_response(self._adapter(node.prompt, node.agents))
         except Exception as e:
             result.trace.append(f"[inquiry] adapter error: {e} — using 0.5")
-            conf = 0.5
+            response = InquiryResponse(confidence=0.5, answer=None)
 
+        conf = max(0.0, min(1.0, response.confidence))
         dist = BetaDist.from_confidence(conf)
         result.trace.append(
             f"[inquiry] confidence={conf:.3f} -> Beta({dist.alpha:.1f},{dist.beta:.1f})"
@@ -134,6 +169,12 @@ class CIRExecutor:
         if bs is not None:
             bs.distribution = dist
             bs.provenance.append(f"inquired(conf={conf:.3f})")
+            if response.answer is not None:
+                bs.answer = response.answer
+                result.answers[bs.name] = response.answer
+                result.trace.append(
+                    f"[inquiry] answer recorded ({len(response.answer)} chars)"
+                )
 
     def _exec_consensus(self, node: ConsensusNode, graph: CIRGraph, result: CIRResult) -> None:
         result.trace.append(f"[consensus] strategy={node.strategy} threshold={node.threshold}")
@@ -228,8 +269,12 @@ class CIRExecutor:
             inq_node = graph.nodes.get(node.subgraph_entry)
             if isinstance(inq_node, InquiryNode):
                 try:
-                    conf = float(self._adapter(inq_node.prompt, inq_node.agents))
-                    conf = max(0.0, min(1.0, conf))
+                    response = _normalize_response(
+                        self._adapter(inq_node.prompt, inq_node.agents)
+                    )
+                    conf = max(0.0, min(1.0, response.confidence))
+                    if response.answer is not None:
+                        bs.answer = response.answer
                 except Exception:
                     conf = bs.distribution.mean
 
@@ -278,7 +323,7 @@ class CIRExecutor:
             import anthropic  # type: ignore[import]
             client = anthropic.Anthropic()
 
-            def _anthropic_adapter(prompt: str, agents: list[str]) -> float:
+            def _anthropic_adapter(prompt: str, agents: list[str]) -> InquiryResponse:
                 import json
                 import re
                 msg = client.messages.create(
@@ -293,8 +338,31 @@ class CIRExecutor:
                     }],
                 )
                 text = msg.content[0].text
-                m = re.search(r'"confidence"\s*:\s*([0-9.]+)', text)
-                return float(m.group(1)) if m else 0.7
+
+                # Prefer a clean JSON parse; fall back to regex if the model
+                # wrapped the JSON in prose. Capture both fields regardless.
+                answer: str | None = None
+                confidence: float = 0.7
+                try:
+                    obj_match = re.search(r"\{.*\}", text, re.DOTALL)
+                    if obj_match:
+                        parsed = json.loads(obj_match.group(0))
+                        if isinstance(parsed, dict):
+                            if "confidence" in parsed:
+                                confidence = float(parsed["confidence"])
+                            if "answer" in parsed and parsed["answer"] is not None:
+                                answer = str(parsed["answer"])
+                            return InquiryResponse(confidence=confidence, answer=answer)
+                except (json.JSONDecodeError, ValueError, TypeError):
+                    pass
+
+                conf_m = re.search(r'"confidence"\s*:\s*([0-9.]+)', text)
+                if conf_m:
+                    confidence = float(conf_m.group(1))
+                ans_m = re.search(r'"answer"\s*:\s*"([^"]*)"', text)
+                if ans_m:
+                    answer = ans_m.group(1)
+                return InquiryResponse(confidence=confidence, answer=answer)
 
             return _anthropic_adapter
         except (ImportError, Exception):

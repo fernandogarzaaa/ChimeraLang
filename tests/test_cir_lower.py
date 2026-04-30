@@ -103,3 +103,79 @@ class TestBeliefFlowAnalysis:
         lowering.lower(prog)
         # No validation node present, so no variance warnings
         assert len(lowering.warnings) == 0
+
+
+class TestSymbolStorePriors:
+    """Lowering consults the SymbolStore to seed BetaDist priors."""
+
+    def test_no_store_uses_uniform_prior(self):
+        prog = make_program(
+            BeliefDecl(name="x", inquire_expr=InquireExpr(
+                prompt="What is gravity?", agents=[], ttl=None,
+            )),
+        )
+        graph = CIRLowering().lower(prog)
+        # No store, no priors seeded.
+        assert graph.belief_store["x"].distribution.alpha == 1.0
+        assert graph.belief_store["x"].distribution.beta == 1.0
+
+    def test_store_with_observation_seeds_prior(self):
+        from chimera.cir.symbols import SymbolStore
+        from chimera.cir.nodes import BetaDist, CIRGraph, InquiryNode
+
+        store = SymbolStore()
+        seed_graph = CIRGraph()
+        seed_graph.add_node(InquiryNode(prompt="What is gravity?"))
+        store.register(seed_graph, prompts=["What is gravity?"])
+        store.record_observation(
+            "What is gravity?", BetaDist.from_confidence(0.9, strength=20.0)
+        )
+
+        prog = make_program(
+            BeliefDecl(name="x", inquire_expr=InquireExpr(
+                prompt="What is gravity?", agents=[], ttl=None,
+            )),
+        )
+        lowering = CIRLowering(symbol_store=store)
+        graph = lowering.lower(prog)
+        # Prior should be pulled toward the observed mean of 0.9.
+        assert graph.belief_store["x"].distribution.mean > 0.7
+        assert "x" in lowering.priors_seeded
+
+    def test_run_cir_round_trip_persists_observation(self, tmp_path):
+        """End-to-end: run, save store, reload store, run again — second run
+        should have its prior seeded from the first run's posterior."""
+        import json
+        from chimera.cir import run_cir
+        from chimera.cir.executor import InquiryResponse
+
+        prog = make_program(
+            BeliefDecl(name="g", inquire_expr=InquireExpr(
+                prompt="What is gravity?", agents=[], ttl=None,
+            )),
+            EmitStmt(value=Identifier(name="g")),
+        )
+        store_path = tmp_path / "symbols.json"
+
+        # First run: confident answer, should accumulate evidence.
+        run_cir(
+            prog,
+            inquiry_adapter=lambda p, a: InquiryResponse(confidence=0.9, answer="ok"),
+            save_symbols=str(store_path),
+        )
+
+        # The persisted store must carry non-uniform prior_alpha/beta now.
+        data = json.loads(store_path.read_text())
+        syms = data["symbols"]
+        assert any(s.get("prior_alpha", 1.0) > 1.0 for s in syms)
+
+        # Second run: load the store and re-lower with a no-op adapter
+        # that returns conf=0.5 with no real signal — the seeded prior
+        # should still be near 0.9 because lowering happens BEFORE the
+        # executor overwrites it. We assert via meta.
+        result = run_cir(
+            prog,
+            inquiry_adapter=lambda p, a: 0.5,
+            load_symbols=str(store_path),
+        )
+        assert "g" in result.meta["priors_seeded"]

@@ -172,6 +172,7 @@ class BeliefState:
     id: str = field(default_factory=lambda: str(uuid.uuid4())[:8])
     timestamp: float = field(default_factory=time.time)
     node_id: str = ""
+    answer: str | None = None
 
     def is_stale(self) -> bool:
         if self.ttl is None:
@@ -192,6 +193,7 @@ class BeliefState:
             id=self.id,
             timestamp=self.timestamp,
             node_id=self.node_id,
+            answer=self.answer,
         )
 
 

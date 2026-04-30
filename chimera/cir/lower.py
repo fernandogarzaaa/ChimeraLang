@@ -4,8 +4,14 @@ Three sequential passes:
   1. Structural: map AST nodes to CIR nodes with typed edges
   2. Dead belief elimination: remove nodes with no emit/resolve downstream
   3. Belief flow analysis: forward-propagate BetaDist, flag high-variance paths
+
+If a SymbolStore is provided, new BeliefDecls consult it for a prior
+distribution derived from past observations of semantically-similar
+prompts; otherwise the prior defaults to Beta(1,1).
 """
 from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 from chimera.cir.nodes import (
     BeliefState, BetaDist, CIREdge, CIRGraph,
@@ -13,18 +19,24 @@ from chimera.cir.nodes import (
     ValidationNode,
 )
 
+if TYPE_CHECKING:
+    from chimera.cir.symbols import SymbolStore
+
 
 class LoweringError(Exception):
     pass
 
 
 class CIRLowering:
-    def __init__(self) -> None:
+    def __init__(self, symbol_store: "SymbolStore | None" = None) -> None:
         self.warnings: list[str] = []
+        self._symbol_store = symbol_store
+        self.priors_seeded: list[str] = []
 
     def lower(self, program: object) -> CIRGraph:
         graph = CIRGraph()
         self.warnings = []
+        self.priors_seeded = []
 
         self._pass_structural(program, graph)
         self._pass_dead_belief_elimination(program, graph)
@@ -52,9 +64,17 @@ class CIRLowering:
                 )
                 graph.add_node(inq)
                 belief_node_map[decl.name] = inq.id
+
+                prior = BetaDist.uniform()
+                if self._symbol_store is not None and inq.prompt:
+                    seeded = self._symbol_store.find_prior_for(inq.prompt)
+                    if seeded is not None:
+                        prior = seeded
+                        self.priors_seeded.append(decl.name)
+
                 graph.belief_store[decl.name] = BeliefState(
                     name=decl.name,
-                    distribution=BetaDist.uniform(),
+                    distribution=prior,
                     ttl=inq.ttl,
                     node_id=inq.id,
                 )
