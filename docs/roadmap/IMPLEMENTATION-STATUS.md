@@ -31,4 +31,4 @@ python -m build
 
 ## Known Alpha Boundaries
 
-The roadmap is implemented to production-ready alpha depth rather than as a full optimizing ML stack. The LLVM backend currently emits typed IR scaffolding, not a complete numeric training compiler. Federated training, causal inference, swarm coordination, predictive coding, and self-improvement are represented as validated language/runtime surfaces ready for deeper execution engines.
+The roadmap is implemented to production-ready alpha depth rather than as a full optimizing ML stack. The LLVM backend currently emits typed IR scaffolding (function signatures, basic-block structure, per-layer commentary); it is **not yet guaranteed to assemble cleanly under `llvm-as`** — several layer bodies reference SSA values whose definitions are pending and will be filled in during Phase 2 completion. Federated training, causal inference, swarm coordination, predictive coding, and self-improvement are represented as validated language/runtime surfaces ready for deeper execution engines.

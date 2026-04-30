@@ -1,8 +1,43 @@
-# ChimeraLang ClaudeConstraintMiddleware pipeline demo
-# This .chimera file demonstrates tool use with constraint middleware
+// claude_tool_use.chimera
+// Demonstrates tool-use semantics in ChimeraLang:
+// model an external tool call (e.g. web_search) as a quantum-consensus gate
+// with confidence collapse, then guard it through reason + assert.
+//
+// Run: chimera run examples/claude_tool_use.chimera --trace
 
-tool web_search(query: str) -> str
+// ── 1. The "tool call" is modeled as a gate with N divergent branches ─────
+// In production each branch is an actual tool invocation; collapse via
+// weighted_vote so a single tool flake is absorbed by the ensemble.
 
-main:
-    let result = web_search("latest quantum computing research")
-    print(result)
+gate web_search(query: Text) -> Converge<Text>
+  branches: 3
+  collapse: weighted_vote
+  threshold: 0.85
+
+  val answer: Text = "Result for: " + query
+  return answer
+end
+
+// ── 2. Wrap the gate in a fn with explicit allow / forbidden capabilities ─
+
+fn invoke_tool(query: Text) -> Converge<Text>
+  allow:
+    "external tool invocation"
+  forbidden:
+    "leaking personal_data"
+    "leaking credentials"
+
+  val result: Converge<Text> = web_search(query)
+  return result
+end
+
+// ── 3. Drive the pipeline ─────────────────────────────────────────────────
+
+val query: Text = "latest quantum computing research"
+val result: Converge<Text> = invoke_tool(query)
+
+emit result
+
+// Integrity checks: tool output reached consensus and is not a hallucination
+assert consensus(result)
+assert no_hallucination(result)
