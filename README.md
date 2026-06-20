@@ -221,7 +221,8 @@ end
 ```bash
 python -m chimera.cli run    <file> [--trace] [--save-symbols=out.json] [--load-symbols=in.json]
 python -m chimera.cli check  <file>          # Type-check without running
-python -m chimera.cli prove  <file>          # Run + generate integrity proof
+python -m chimera.cli prove  <file> [--out=cert.json] [--key=hmac.key] [--sign-key=ed25519.pem]
+python -m chimera.cli verify <cert.json> [--key=hmac.key] [--pubkey=HEX]
 python -m chimera.cli compile <file> [--backend=pytorch|llvm] [--out=file]
 python -m chimera.cli rag <corpus.json> --query="..." [--json]
 python -m chimera.cli parse  <file>          # Print AST
@@ -252,6 +253,45 @@ The corpus is a JSON array of documents:
 ```
 
 The runtime uses deterministic hashing embeddings, `VectorStore` retrieval, extractive answer synthesis, `GuardLayer` confidence/variance checks, and `ConstitutionLayer` safety checks. If retrieval is weak, the answer is refused instead of hallucinated.
+
+---
+
+## Verifiable Certificates
+
+A ChimeraLang program can emit a **portable certificate** of its own reasoning that any third party can verify **offline**, with nothing but the certificate file. The verifier (`chimera/verify.py`) imports only the Python standard library and nothing from the execution path — it re-derives every hash from the certificate itself.
+
+**Emit a certificate** alongside the human-readable integrity report:
+
+```bash
+# Tamper-evident certificate (standard library only)
+python -m chimera.cli prove examples/belief_reasoning.chimera --out=cert.json
+
+# Add shared-secret authentication (HMAC-SHA256)
+python -m chimera.cli prove examples/belief_reasoning.chimera --out=cert.json --key=hmac.key
+
+# Add an asymmetric, third-party-verifiable signature (needs `cryptography`)
+python -m chimera.cli prove examples/belief_reasoning.chimera --out=cert.json --sign-key=ed25519.pem
+```
+
+**Verify a certificate** (exit code `0` = verified, `1` = failed):
+
+```bash
+python -m chimera.cli verify cert.json                  # tamper-evidence
+python -m chimera.cli verify cert.json --key=hmac.key   # + authenticate with shared secret
+python -m chimera.cli verify cert.json --pubkey=HEX     # + verify signature against a trusted key
+```
+
+The verifier runs **all** checks and reports **every** failure (no early exit): certificate-hash binding, optional HMAC, reasoning-chain integrity, gate-certificate hashes, verdict consistency, and the optional signature.
+
+### Guarantees (stated exactly — no stronger claims)
+
+| Mechanism | What it proves | Dependency |
+|---|---|---|
+| **Hash binding** (`certificate_hash`, SHA-256) | **Tamper-evidence** — any edit to any report field is detected. | stdlib |
+| **HMAC-SHA256** (`--key`) | **Authentication via a shared secret** — confirms the holder of the secret produced the certificate. | stdlib |
+| **Ed25519 signature** (`--sign-key` / `--pubkey`) | **Asymmetric, third-party-verifiable signature** over the canonical report. | optional `cryptography` |
+
+The Ed25519 layer is **optional**: signing requires `pip install cryptography`, and if it is absent, every other feature still works. When verifying a signed certificate **without** providing a trusted `--pubkey`, the signature is checked only against the certificate's **own embedded** public key. That is a **trust-on-first-use self-consistency check, not proof of authorship** — anyone can mint a key and embed it. Authorship is established only by verifying against a `--pubkey` you already trust through an independent channel.
 
 ---
 
