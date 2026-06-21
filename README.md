@@ -287,9 +287,11 @@ The verifier runs **all** checks and reports **every** failure (no early exit): 
 
 | Mechanism | What it proves | Dependency |
 |---|---|---|
-| **Hash binding** (`certificate_hash`, SHA-256) | **Tamper-evidence** — any edit to any report field is detected. | stdlib |
+| **Hash binding** (`certificate_hash`, SHA-256) | **Tamper-evidence** — binds every report field to one digest, so corruption or modification is caught when the expected digest is known through a trusted channel. | stdlib |
 | **HMAC-SHA256** (`--key`) | **Authentication via a shared secret** — confirms the holder of the secret produced the certificate. | stdlib |
 | **Ed25519 signature** (`--sign-key` / `--pubkey`) | **Asymmetric, third-party-verifiable signature** over the canonical report. | optional `cryptography` |
+
+**On the bare hash binding:** the `certificate_hash` travels inside the certificate, so by itself it detects accidental corruption and lets you pin/compare a known-good digest out-of-band — it does **not** stop a motivated adversary, who can edit the report and recompute the digest. For authentication against untrusted parties, use HMAC (shared secret) or Ed25519 (asymmetric signature).
 
 The Ed25519 layer is **optional**: signing requires `pip install cryptography`, and if it is absent, every other feature still works. When verifying a signed certificate **without** providing a trusted `--pubkey`, the signature is checked only against the certificate's **own embedded** public key. That is a **trust-on-first-use self-consistency check, not proof of authorship** — anyone can mint a key and embed it. Authorship is established only by verifying against a `--pubkey` you already trust through an independent channel.
 

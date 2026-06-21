@@ -255,6 +255,17 @@ def cmd_rag(
         sys.exit(1)
 
 
+def _read_key_file(path: str | None, label: str) -> bytes | None:
+    """Read a key file as bytes, or exit cleanly with a CLI error on failure."""
+    if not path:
+        return None
+    try:
+        return Path(path).read_bytes()
+    except OSError as e:
+        print(f"chimera: error reading {label} file '{path}': {e}", file=sys.stderr)
+        sys.exit(1)
+
+
 def cmd_prove(
     path: str,
     out: str | None = None,
@@ -294,13 +305,8 @@ def cmd_prove(
         return
 
     # Emit a portable, self-verifying certificate.
-    hmac_key = None
-    if hmac_key_file:
-        hmac_key = Path(hmac_key_file).read_bytes()
-
-    sign_key = None
-    if sign_key_file:
-        sign_key = Path(sign_key_file).read_bytes()
+    hmac_key = _read_key_file(hmac_key_file, "HMAC key")
+    sign_key = _read_key_file(sign_key_file, "signing key")
 
     try:
         certificate = report.to_certificate(hmac_key=hmac_key, sign_key=sign_key)
@@ -308,9 +314,13 @@ def cmd_prove(
         print(f"chimera: {e}", file=sys.stderr)
         sys.exit(1)
 
-    Path(out).write_text(
-        json.dumps(certificate, indent=2, sort_keys=True), encoding="utf-8"
-    )
+    try:
+        Path(out).write_text(
+            json.dumps(certificate, indent=2, sort_keys=True), encoding="utf-8"
+        )
+    except OSError as e:
+        print(f"chimera: error writing certificate '{out}': {e}", file=sys.stderr)
+        sys.exit(1)
     binding = certificate["binding"]
     print(f"\nchimera: certificate written to {out}")
     print(f"  certificate_hash: {binding['certificate_hash']}")
@@ -334,12 +344,18 @@ def cmd_verify(
         sys.exit(1)
 
     try:
-        certificate = json.loads(p.read_text(encoding="utf-8"))
+        raw = p.read_text(encoding="utf-8")
+    except OSError as e:
+        print(f"chimera: error reading certificate '{cert_path}': {e}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        certificate = json.loads(raw)
     except json.JSONDecodeError as e:
         print(f"chimera: invalid certificate JSON: {e}", file=sys.stderr)
         sys.exit(1)
 
-    hmac_key = Path(hmac_key_file).read_bytes() if hmac_key_file else None
+    hmac_key = _read_key_file(hmac_key_file, "HMAC key")
 
     result = CertificateVerifier.verify(
         certificate, hmac_key=hmac_key, pubkey_hex=pubkey_hex

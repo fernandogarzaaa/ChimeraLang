@@ -167,7 +167,7 @@ class IntegrityReport:
                 for link in self.reasoning_chain.links
             ]
             # Complete gate fields so a verifier can recompute the gate hash.
-            for gate_dict, gc in zip(gates, self.gate_certificates):
+            for gate_dict, gc in zip(gates, self.gate_certificates, strict=True):
                 gate_dict["branch_confidences"] = gc.branch_confidences
                 if _is_json_safe(gc.result_value):
                     gate_dict["result_value"] = gc.result_value

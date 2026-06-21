@@ -215,6 +215,26 @@ def test_pubkey_requested_but_unsigned():
 # 10. Independence guard
 # ---------------------------------------------------------------------------
 
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda c: c["report"].__setitem__("chain", "not-an-object"),
+        lambda c: c["report"]["chain"].__setitem__("links", "not-a-list"),
+        lambda c: c["report"].__setitem__("gates", "not-a-list"),
+        lambda c: c["report"].__setitem__("assertions", "not-an-object"),
+        lambda c: c["report"].__setitem__("hallucination", 12345),
+        lambda c: c["binding"].__setitem__("signature", "not-an-object"),
+    ],
+)
+def test_malformed_certificate_fails_without_crashing(mutate):
+    """Malformed/malicious nested types must yield a failed result, never a traceback."""
+    cert = _certificate(BELIEF)
+    mutate(cert)
+    result = CertificateVerifier.verify(cert)  # must not raise
+    assert result.valid is False
+    assert result.failures
+
+
 def test_verifier_is_independent():
     import chimera.verify
 
@@ -250,6 +270,7 @@ def _run_cli(args, **kwargs):
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
+        timeout=kwargs.pop("timeout", 30),
         **kwargs,
     )
 

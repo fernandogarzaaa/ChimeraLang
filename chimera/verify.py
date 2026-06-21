@@ -8,7 +8,13 @@ execution path (vm/parser/lexer/detect/integrity); all recomputation logic
 here from the certificate alone. A test enforces this independence.
 
 Guarantees, stated precisely:
-  - certificate_hash binding = tamper-evidence (any edit is detected).
+  - certificate_hash binding = tamper-evidence. It binds every report field
+    to one SHA-256 digest, so corruption or modification is caught WHEN the
+    expected digest is known through a trusted channel (e.g. pinned when the
+    certificate was produced, or compared against an out-of-band value). The
+    digest travels inside the certificate, so a bare hash on its own does NOT
+    resist an adversary who edits the report and recomputes the digest — use
+    HMAC or Ed25519 for authentication against untrusted parties.
   - HMAC = authentication via a shared secret.
   - Ed25519 signature = asymmetric, third-party-verifiable signature.
   - Verifying against the certificate's *embedded* public key is a
@@ -105,14 +111,21 @@ class CertificateVerifier:
 
         # --- Check 4: chain integrity -------------------------------------
         checks_run += 1
-        chain = report.get("chain", {})
+        chain = report.get("chain")
+        if not isinstance(chain, dict):
+            failures.append("chain: report.chain is missing or not an object")
+            chain = {}
         links = chain.get("links")
         if links is None:
             failures.append("chain: certificate report is missing full chain links")
+        elif not isinstance(links, list):
+            failures.append("chain: report.chain.links is not a list")
         elif not links:
             expected_empty = hashlib.sha256(b"empty").hexdigest()[:32]
             if chain.get("root_hash") != expected_empty:
                 failures.append("chain: empty chain has incorrect root_hash")
+        elif not all(isinstance(link, dict) for link in links):
+            failures.append("chain: one or more chain links are not objects")
         else:
             if links[0].get("prev_hash") != "genesis":
                 failures.append("chain: first link prev_hash is not 'genesis'")
@@ -139,7 +152,13 @@ class CertificateVerifier:
         # --- Check 5: gate certificates -----------------------------------
         checks_run += 1
         gates = report.get("gates", [])
+        if not isinstance(gates, list):
+            failures.append("gate: report.gates is not a list")
+            gates = []
         for i, gate in enumerate(gates):
+            if not isinstance(gate, dict):
+                failures.append(f"gate {i}: certificate entry is not an object")
+                continue
             if "branch_confidences" not in gate:
                 failures.append(f"gate {i}: certificate missing branch_confidences")
                 continue
@@ -179,6 +198,9 @@ class CertificateVerifier:
                 failures.append("signature: pubkey requested but certificate is unsigned")
             else:
                 signature_status = "absent"
+        elif not isinstance(signature, dict):
+            signature_status = "invalid"
+            failures.append("signature: binding.signature is not an object")
         else:
             signature_status, sig_failures = _verify_signature(
                 signature, report_bytes, pubkey_hex
@@ -195,16 +217,32 @@ class CertificateVerifier:
 
 
 def _recompute_verdict(report: dict) -> str:
-    """Re-derive the verdict from report fields (mirrors _compute_verdict)."""
-    assertions = report.get("assertions", {})
-    if assertions.get("failed", 0) > 0:
+    """Re-derive the verdict from report fields (mirrors _compute_verdict).
+
+    Tolerates malformed/missing nested objects: a bad shape simply does not
+    match the stored verdict, surfacing as a verdict failure rather than a crash.
+    """
+    assertions = report.get("assertions")
+    if not isinstance(assertions, dict):
+        assertions = {}
+    if (assertions.get("failed") or 0) > 0:
         return f"FAIL {_EM} assertion failures"
-    if not report.get("chain", {}).get("valid", True):
+    chain = report.get("chain")
+    if not isinstance(chain, dict):
+        chain = {}
+    if not chain.get("valid", True):
         return f"FAIL {_EM} reasoning chain corrupted"
-    hallucination = report.get("hallucination", {})
+    hallucination = report.get("hallucination")
+    if not isinstance(hallucination, dict):
+        hallucination = {}
     if not hallucination.get("clean", True):
-        flags_detail = hallucination.get("flags_detail", [])
-        critical = [f for f in flags_detail if f.get("severity", 0.0) >= 0.8]
+        flags_detail = hallucination.get("flags_detail")
+        if not isinstance(flags_detail, list):
+            flags_detail = []
+        critical = [
+            f for f in flags_detail
+            if isinstance(f, dict) and f.get("severity", 0.0) >= 0.8
+        ]
         if critical:
             return f"WARN {_EM} {len(critical)} critical hallucination flag(s)"
         return f"PASS_WITH_WARNINGS {_EM} {hallucination.get('flags', 0)} flag(s)"
