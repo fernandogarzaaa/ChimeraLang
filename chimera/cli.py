@@ -255,8 +255,24 @@ def cmd_rag(
         sys.exit(1)
 
 
-def cmd_prove(path: str) -> None:
-    """Execute + full integrity report."""
+def _read_key_file(path: str | None, label: str) -> bytes | None:
+    """Read a key file as bytes, or exit cleanly with a CLI error on failure."""
+    if not path:
+        return None
+    try:
+        return Path(path).read_bytes()
+    except OSError as e:
+        print(f"chimera: error reading {label} file '{path}': {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_prove(
+    path: str,
+    out: str | None = None,
+    hmac_key_file: str | None = None,
+    sign_key_file: str | None = None,
+) -> None:
+    """Execute + full integrity report, optionally emitting a portable certificate."""
     source = _read_source(path)
     try:
         program = _parse(source, path)
@@ -284,6 +300,80 @@ def cmd_prove(path: str) -> None:
     print("═══════════════════════════════════════════════")
     print(f"  Verdict: {report.verdict}")
     print("═══════════════════════════════════════════════")
+
+    if not out:
+        return
+
+    # Emit a portable, self-verifying certificate.
+    hmac_key = _read_key_file(hmac_key_file, "HMAC key")
+    sign_key = _read_key_file(sign_key_file, "signing key")
+
+    try:
+        certificate = report.to_certificate(hmac_key=hmac_key, sign_key=sign_key)
+    except RuntimeError as e:
+        print(f"chimera: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        Path(out).write_text(
+            json.dumps(certificate, indent=2, sort_keys=True), encoding="utf-8"
+        )
+    except OSError as e:
+        print(f"chimera: error writing certificate '{out}': {e}", file=sys.stderr)
+        sys.exit(1)
+    binding = certificate["binding"]
+    print(f"\nchimera: certificate written to {out}")
+    print(f"  certificate_hash: {binding['certificate_hash']}")
+    if binding.get("hmac"):
+        print("  hmac: present (HMAC-SHA256)")
+    if binding.get("signature"):
+        print(f"  signature pubkey: {binding['signature']['pubkey']}")
+
+
+def cmd_verify(
+    cert_path: str,
+    hmac_key_file: str | None = None,
+    pubkey_hex: str | None = None,
+) -> None:
+    """Independently verify a ChimeraLang certificate offline."""
+    from chimera.verify import CertificateVerifier
+
+    p = Path(cert_path)
+    if not p.exists():
+        print(f"chimera: error: certificate not found: {p}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        raw = p.read_text(encoding="utf-8")
+    except OSError as e:
+        print(f"chimera: error reading certificate '{cert_path}': {e}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        certificate = json.loads(raw)
+    except json.JSONDecodeError as e:
+        print(f"chimera: invalid certificate JSON: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    hmac_key = _read_key_file(hmac_key_file, "HMAC key")
+
+    result = CertificateVerifier.verify(
+        certificate, hmac_key=hmac_key, pubkey_hex=pubkey_hex
+    )
+
+    if result.valid:
+        print("VERIFIED ✓")
+    else:
+        print("VERIFICATION FAILED ✗")
+    print(f"  recomputed verdict: {result.verdict_recomputed}")
+    print(f"  signature status:   {result.signature_status}")
+    print(f"  checks run:         {result.checks_run}")
+    if result.failures:
+        print("  failures:")
+        for failure in result.failures:
+            print(f"    - {failure}")
+
+    sys.exit(0 if result.valid else 1)
 
 
 def cmd_repl() -> None:
@@ -388,7 +478,10 @@ Usage:
   chimera check   <file.chimera>                   Type-check only
   chimera lex     <file.chimera>                   Dump token stream
   chimera parse   <file.chimera>                   Dump AST
-  chimera prove   <file.chimera>                   Run + integrity report
+  chimera prove   <file.chimera> [--out=cert.json] [--key=hmac.key] [--sign-key=ed25519.pem]
+                                                   Run + integrity report (+ portable certificate)
+  chimera verify  <cert.json> [--key=hmac.key] [--pubkey=HEX]
+                                                   Independently verify a certificate offline
   chimera compile <file.chimera> [--backend=pytorch] [--out=file.py]
                                                    Compile to PyTorch Python
   chimera rag     <corpus.json> --query=TEXT [--top-k=N] [--min-similarity=N] [--json]
@@ -399,6 +492,9 @@ Options:
   --trace           Show reasoning trace (with run)
   --backend=NAME    Compilation backend (default: pytorch)
   --out=FILE        Write compiled output to file instead of stdout
+  --key=FILE        HMAC key file (prove: sign, verify: authenticate)
+  --sign-key=FILE   Ed25519 private key PEM (prove: sign; needs cryptography)
+  --pubkey=HEX      Ed25519 public key hex for third-party verification
   --query=TEXT      RAG query
   --top-k=N         RAG retrieval count (default: 3)
   --min-similarity=N
@@ -437,7 +533,17 @@ def main() -> None:
         "check": lambda: cmd_check(filepath),
         "lex": lambda: cmd_lex(filepath),
         "parse": lambda: cmd_parse(filepath),
-        "prove": lambda: cmd_prove(filepath),
+        "prove": lambda: cmd_prove(
+            filepath,
+            out=next((a.split("=", 1)[1] for a in flag_args if a.startswith("--out=")), None),
+            hmac_key_file=next((a.split("=", 1)[1] for a in flag_args if a.startswith("--key=")), None),
+            sign_key_file=next((a.split("=", 1)[1] for a in flag_args if a.startswith("--sign-key=")), None),
+        ),
+        "verify": lambda: cmd_verify(
+            filepath,
+            hmac_key_file=next((a.split("=", 1)[1] for a in flag_args if a.startswith("--key=")), None),
+            pubkey_hex=next((a.split("=", 1)[1] for a in flag_args if a.startswith("--pubkey=")), None),
+        ),
         "compile": lambda: cmd_compile(
             filepath,
             backend=next((a.split("=")[1] for a in flag_args if a.startswith("--backend=")), "pytorch"),
