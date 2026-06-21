@@ -141,6 +141,24 @@ def test_allow_whitelist_satisfied():
     assert result.ok is True, result.errors
 
 
+def test_freeform_allow_is_not_an_empty_whitelist():
+    # An `allow` clause with only non-canonical strings is a semantic annotation,
+    # not a whitelist — it must not reject real capability use (here: io).
+    src = '''\
+fn annotated(msg: Text) -> Void
+  allow:
+    "external tool invocation"
+  print(msg)
+  return
+end
+
+val x: Text = "hi"
+'''
+    result = _check_src(src)
+    assert result.ok is True, result.errors
+    assert result.capability_errors == []
+
+
 # ---------------------------------------------------------------------------
 # 4. Transitivity
 # ---------------------------------------------------------------------------
@@ -266,6 +284,18 @@ def test_certificate_carries_capability_attestation(tmp_path):
     # The existing hash binding covers the new field with no verifier change.
     result = CertificateVerifier.verify(cert)
     assert result.valid is True, result.failures
+
+
+def test_prove_refuses_violating_program(tmp_path):
+    # prove must not become a bypass: a program that fails the capability check
+    # is refused (no certificate written), and never executed.
+    p = tmp_path / "viol.chimera"
+    p.write_text(FORBIDDEN_IO_SRC, encoding="utf-8")
+    cert_path = tmp_path / "cert.json"
+    prove = _run_cli(["prove", str(p), f"--out={cert_path}"])
+    assert prove.returncode == 1
+    assert "refusing to prove" in prove.stderr
+    assert not cert_path.exists()
 
 
 def test_capability_attestation_in_full_report_only():

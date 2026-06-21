@@ -279,13 +279,16 @@ class TypeChecker:
             constraints = getattr(decl, "constraints", None) or []
             forbidden_caps: set[str] = set()
             allow_caps: set[str] = set()
-            has_allow = False
             for c in constraints:
                 if isinstance(c, ForbiddenConstraint):
                     forbidden_caps |= (set(c.capabilities) & caps.CANONICAL)
                 elif isinstance(c, AllowConstraint):
-                    has_allow = True
                     allow_caps |= (set(c.capabilities) & caps.CANONICAL)
+
+            # An `allow` clause only acts as a whitelist when it names at least
+            # one canonical capability; a clause containing only free-form
+            # annotations (e.g. "external tool invocation") is ignored.
+            has_allow = bool(allow_caps)
 
             if not forbidden_caps and not has_allow:
                 continue

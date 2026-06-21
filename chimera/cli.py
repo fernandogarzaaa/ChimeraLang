@@ -304,6 +304,19 @@ def cmd_prove(
         print(f"chimera: parse error: {e}", file=sys.stderr)
         sys.exit(1)
 
+    # Static checks gate proving exactly as they gate running: refuse to produce
+    # an attestation for a program that fails static (capability) checks, and do
+    # so BEFORE executing it.
+    type_result = TypeChecker().check(program)
+    if not type_result.ok:
+        for e in type_result.errors:
+            print(f"chimera: error: {e}", file=sys.stderr)
+        print(
+            f"chimera: {path} — refusing to prove ({len(type_result.errors)} error(s))",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     # Execute
     vm = ChimeraVM()
     exec_result = vm.execute(program)
@@ -311,9 +324,6 @@ def cmd_prove(
     # Hallucination scan
     detector = HallucinationDetector()
     detection = detector.full_scan(exec_result.gate_logs, exec_result.emitted)
-
-    # Static capability attestation (records that the check passed at prove time)
-    type_result = TypeChecker().check(program)
 
     # Integrity report
     engine = IntegrityEngine()
