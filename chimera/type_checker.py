@@ -11,10 +11,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from chimera.ast_nodes import (
+    AllowConstraint,
     AssertStmt,
+    BeliefDecl,
     BinaryOp,
     BoolLiteral,
     CallExpr,
+    ForbiddenConstraint,
     CausalModelDecl,
     Declaration,
     EmitStmt,
@@ -62,6 +65,7 @@ from chimera.ast_nodes import (
     ConstitutedType,
     ConstitutionDecl,
 )
+from chimera import capabilities as caps
 from chimera.types import (
     BOOL_T,
     BUILTINS,
@@ -112,6 +116,11 @@ class TypeCheckResult:
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     ok: bool = True
+    #: Subset of ``errors`` that are capability-constraint violations. Tracked
+    #: separately so the CLI can downgrade ONLY these via --no-capability-check.
+    capability_errors: list[str] = field(default_factory=list)
+    #: Static capability attestation: {"statically_checked", "declared", "used"}.
+    capabilities: dict = field(default_factory=dict)
 
 
 class TypeChecker:
@@ -123,6 +132,9 @@ class TypeChecker:
     def check(self, program: Program) -> TypeCheckResult:
         for decl in program.declarations:
             self._check_decl(decl)
+        # Static capability enforcement runs after declarations are registered,
+        # so the call graph (and thus transitive capability use) is complete.
+        self._check_capabilities(program)
         self._result.ok = len(self._result.errors) == 0
         return self._result
 
@@ -221,6 +233,165 @@ class TypeChecker:
         else:
             final = declared or VOID_T
         self._env.define(val.name, final)
+
+    # ------------------------------------------------------------------
+    # Static capability enforcement
+    # ------------------------------------------------------------------
+
+    def _check_capabilities(self, program: Program) -> None:
+        """Infer per-declaration capability use (transitively across user calls)
+        and enforce each declaration's ``allow``/``forbidden`` constraints.
+
+        Guarantee: declared capability constraints are enforced against
+        statically known capability-bearing operations (agent inquiries, the
+        ``print`` builtin). This is not a runtime sandbox.
+        """
+        # Bodies whose effects we analyse, keyed by declaration name.
+        decls: dict[str, object] = {}
+        direct_caps: dict[str, set[str]] = {}
+        direct_sites: dict[str, dict[str, str]] = {}
+        callees: dict[str, set[str]] = {}
+
+        for decl in program.declarations:
+            name = getattr(decl, "name", None)
+            if name is None or not hasattr(decl, "body"):
+                # Top-level beliefs etc. are handled separately below.
+                if not isinstance(decl, BeliefDecl):
+                    continue
+            if name is None:
+                continue
+            nodes = self._effect_nodes(decl)
+            decls[name] = decl
+            sites = caps.direct_capability_sites(nodes)
+            direct_sites[name] = sites
+            direct_caps[name] = set(sites.keys())
+            callees[name] = caps.called_names(nodes)
+
+        # Restrict the call graph to user-defined declarations we actually track.
+        known = set(decls.keys())
+        for name in callees:
+            callees[name] &= known
+
+        total_caps = self._propagate_capabilities(direct_caps, callees)
+
+        # --- Enforce allow/forbidden on declarations that carry constraints ---
+        for name, decl in decls.items():
+            constraints = getattr(decl, "constraints", None) or []
+            forbidden_caps: set[str] = set()
+            allow_caps: set[str] = set()
+            has_allow = False
+            for c in constraints:
+                if isinstance(c, ForbiddenConstraint):
+                    forbidden_caps |= (set(c.capabilities) & caps.CANONICAL)
+                elif isinstance(c, AllowConstraint):
+                    has_allow = True
+                    allow_caps |= (set(c.capabilities) & caps.CANONICAL)
+
+            if not forbidden_caps and not has_allow:
+                continue
+
+            for cap in sorted(total_caps[name]):
+                site = self._capability_site(cap, name, direct_sites, total_caps, callees)
+                if cap in forbidden_caps:
+                    self._add_capability_error(
+                        f"[{name}] declares 'forbidden {cap}' but its body uses "
+                        f"a {cap} capability (via {site})"
+                    )
+                elif has_allow and cap not in allow_caps:
+                    self._add_capability_error(
+                        f"[{name}] uses capability '{cap}' not in its 'allow' set "
+                        f"(via {site})"
+                    )
+
+        self._result.capabilities = {
+            "statically_checked": True,
+            "declared": {
+                name: {
+                    "allow": sorted(
+                        {
+                            cap
+                            for c in (getattr(decl, "constraints", None) or [])
+                            if isinstance(c, AllowConstraint)
+                            for cap in (set(c.capabilities) & caps.CANONICAL)
+                        }
+                    ),
+                    "forbidden": sorted(
+                        {
+                            cap
+                            for c in (getattr(decl, "constraints", None) or [])
+                            if isinstance(c, ForbiddenConstraint)
+                            for cap in (set(c.capabilities) & caps.CANONICAL)
+                        }
+                    ),
+                }
+                for name, decl in decls.items()
+                if getattr(decl, "constraints", None)
+            },
+            "used": {
+                name: sorted(total_caps[name])
+                for name in decls
+                if total_caps[name]
+            },
+        }
+
+    @staticmethod
+    def _effect_nodes(decl: object) -> list:
+        """The body/effect-bearing sub-nodes of a declaration (excludes the
+        ``must``/``allow``/``forbidden`` constraint clauses themselves)."""
+        nodes: list = list(getattr(decl, "body", []) or [])
+        # ReasonDecl carries explore/evaluate expressions in addition to a body.
+        for attr in ("explore_expr", "evaluate_expr"):
+            expr = getattr(decl, attr, None)
+            if expr is not None:
+                nodes.append(expr)
+        # BeliefDecl carries an inquiry directly.
+        inquire = getattr(decl, "inquire_expr", None)
+        if inquire is not None:
+            nodes.append(inquire)
+        return nodes
+
+    @staticmethod
+    def _propagate_capabilities(
+        direct_caps: dict[str, set[str]],
+        callees: dict[str, set[str]],
+    ) -> dict[str, set[str]]:
+        """Transitive closure of capability use over the call graph.
+
+        Iterates to a fixed point; monotonic growth bounded by the (small)
+        capability set, so mutual recursion terminates safely.
+        """
+        total = {name: set(c) for name, c in direct_caps.items()}
+        changed = True
+        while changed:
+            changed = False
+            for name in total:
+                for callee in callees.get(name, ()):
+                    new = total.get(callee, set()) - total[name]
+                    if new:
+                        total[name] |= new
+                        changed = True
+        return total
+
+    @staticmethod
+    def _capability_site(
+        cap: str,
+        name: str,
+        direct_sites: dict[str, dict[str, str]],
+        total_caps: dict[str, set[str]],
+        callees: dict[str, set[str]],
+    ) -> str:
+        """Attribute a capability to the most specific source site we can name."""
+        local = direct_sites.get(name, {})
+        if cap in local:
+            return local[cap]
+        for callee in sorted(callees.get(name, ())):
+            if cap in total_caps.get(callee, set()):
+                return f"call to '{callee}'"
+        return "an unidentified site"
+
+    def _add_capability_error(self, message: str) -> None:
+        self._result.errors.append(message)
+        self._result.capability_errors.append(message)
 
     # ------------------------------------------------------------------
     # Statements

@@ -107,6 +107,30 @@ def cmd_run(path: str, *, show_trace: bool = False, extra_args: list[str] | None
         print(f"chimera: parse error: {e}", file=sys.stderr)
         sys.exit(1)
 
+    # Static checks (including capability enforcement) gate execution.
+    args = extra_args or []
+    no_capability_check = "--no-capability-check" in args
+    result = TypeChecker().check(program)
+    if not result.ok:
+        non_capability_errors = [
+            e for e in result.errors if e not in result.capability_errors
+        ]
+        if no_capability_check and not non_capability_errors:
+            for e in result.capability_errors:
+                print(
+                    f"chimera: warning (capability check bypassed): {e}",
+                    file=sys.stderr,
+                )
+        else:
+            for e in result.errors:
+                print(f"chimera: error: {e}", file=sys.stderr)
+            print(
+                f"chimera: {path} — refusing to execute ({len(result.errors)} error(s); "
+                f"use --no-capability-check to bypass capability violations)",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
     # Route to CIR path if program uses belief constructs
     from chimera.ast_nodes import BeliefDecl
     uses_cir = any(isinstance(d, BeliefDecl) for d in program.declarations)
@@ -288,9 +312,14 @@ def cmd_prove(
     detector = HallucinationDetector()
     detection = detector.full_scan(exec_result.gate_logs, exec_result.emitted)
 
+    # Static capability attestation (records that the check passed at prove time)
+    type_result = TypeChecker().check(program)
+
     # Integrity report
     engine = IntegrityEngine()
-    report = engine.certify(exec_result, detection, source)
+    report = engine.certify(
+        exec_result, detection, source, capabilities=type_result.capabilities
+    )
 
     # Print report
     print("═══════════════════════════════════════════════")
@@ -474,8 +503,9 @@ USAGE = """\
 ChimeraLang v0.2.0 — A programming language for AI cognition
 
 Usage:
-  chimera run     <file.chimera>                   Execute a program
-  chimera check   <file.chimera>                   Type-check only
+  chimera run     <file.chimera> [--no-capability-check]
+                                                   Execute a program (static + capability checked)
+  chimera check   <file.chimera>                   Type-check + capability check only
   chimera lex     <file.chimera>                   Dump token stream
   chimera parse   <file.chimera>                   Dump AST
   chimera prove   <file.chimera> [--out=cert.json] [--key=hmac.key] [--sign-key=ed25519.pem]
@@ -490,6 +520,8 @@ Usage:
 
 Options:
   --trace           Show reasoning trace (with run)
+  --no-capability-check
+                   Downgrade capability violations to warnings and run anyway
   --backend=NAME    Compilation backend (default: pytorch)
   --out=FILE        Write compiled output to file instead of stdout
   --key=FILE        HMAC key file (prove: sign, verify: authenticate)
