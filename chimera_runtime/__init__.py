@@ -47,4 +47,4 @@ __all__ = ["BeliefTracker", "GuardLayer", "GuardResult",
            "SwarmProtocol", "CausalModel", "DifferentialPrivacyEngine",
            "MetaLearner", "PredictiveCodingRuntime", "ReplayBuffer",
            "RewardSystem", "SelfImprover"]
-__version__ = "0.1.0"
+__version__ = "0.2.0"

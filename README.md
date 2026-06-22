@@ -23,15 +23,34 @@ ChimeraLang treats uncertainty, confidence, and epistemic state as **first-class
 
 ---
 
-## Quick Start
+## Installation
+
+```bash
+pip install chimeralang            # core (standard library only)
+pip install "chimeralang[sign]"    # + Ed25519 certificate signing (cryptography)
+```
+
+This installs the `chimera` command. Ed25519 signing is optional — without the
+`[sign]` extra it degrades gracefully, and verifying unsigned/HMAC certificates
+still works.
+
+```bash
+chimera run    examples/belief_reasoning.chimera --trace   # execute
+chimera check  examples/quantum_reasoning.chimera          # type + capability check
+chimera prove  examples/quantum_reasoning.chimera --out=cert.json   # emit certificate
+chimera verify cert.json                                   # verify offline
+```
+
+**Requirements:** Python ≥ 3.11. The core install has no third-party dependencies.
+Install `anthropic` for live LLM `inquire` calls (otherwise a mock adapter is used).
+
+## Quick Start (from source)
 
 ```bash
 git clone https://github.com/fernandogarzaaa/ChimeraLang
 cd ChimeraLang
 python -m chimera.cli run examples/belief_reasoning.chimera --trace
 ```
-
-**Requirements:** Python ≥ 3.11, no external dependencies. Install `anthropic` for live LLM `inquire` calls; otherwise runs with a mock adapter.
 
 ---
 

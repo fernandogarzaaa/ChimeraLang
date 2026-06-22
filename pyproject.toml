@@ -1,6 +1,6 @@
 [project]
 name = "chimeralang"
-version = "0.1.0"
+version = "0.2.0"
 description = "A programming language designed for AI cognition: probabilistic types, quantum consensus, and directed hallucination."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -22,6 +22,7 @@ classifiers = [
 dev = ["build>=1", "pytest>=8"]
 ml = ["torch>=2"]
 vector = ["numpy>=1.26"]
+sign = ["cryptography>=42"]
 
 [project.urls]
 Homepage = "https://github.com/fernandogarzaaa/ChimeraLang"
