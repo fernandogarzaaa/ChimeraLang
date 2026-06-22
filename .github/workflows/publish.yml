@@ -9,11 +9,14 @@ on:
         description: "Publish the current ref to PyPI"
         required: true
         type: boolean
+  push:
+    branches: [main]
+    paths: ["pyproject.toml", ".github/workflows/publish.yml"]
 
 jobs:
   publish:
     name: Build and publish package
-    if: github.event_name == 'release' || inputs.confirm_publish == true
+    if: github.event_name == 'release' || github.event_name == 'push' || inputs.confirm_publish == true
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -42,3 +45,5 @@ jobs:
 
       - name: Publish package distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          skip_existing: true
