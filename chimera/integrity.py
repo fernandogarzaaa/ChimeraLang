@@ -133,6 +133,9 @@ class IntegrityReport:
     hallucination_clean: bool = True
     verdict: str = "UNKNOWN"
     duration_ms: float = 0.0
+    #: Static capability attestation from the type checker (see capabilities.py).
+    #: {"statically_checked": bool, "declared": {...}, "used": {...}}.
+    capabilities: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self, full: bool = False) -> dict[str, Any]:
         chain: dict[str, Any] = {
@@ -181,7 +184,7 @@ class IntegrityReport:
                 for f in self.hallucination_flags
             ]
 
-        return {
+        result: dict[str, Any] = {
             "timestamp": self.timestamp,
             "program_hash": self.program_hash,
             "chain": chain,
@@ -194,6 +197,18 @@ class IntegrityReport:
             "verdict": self.verdict,
             "duration_ms": self.duration_ms,
         }
+
+        if full:
+            # Static capability attestation: records that capability checking
+            # ran at prove time and what each declaration declared/used. This
+            # says nothing about runtime sandboxing.
+            result["capabilities"] = self.capabilities or {
+                "statically_checked": False,
+                "declared": {},
+                "used": {},
+            }
+
+        return result
 
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), indent=2)
@@ -274,9 +289,12 @@ class IntegrityEngine:
         exec_result: ExecutionResult,
         detection_report: DetectionReport,
         source_code: str = "",
+        capabilities: dict | None = None,
     ) -> IntegrityReport:
         report = IntegrityReport()
         report.duration_ms = exec_result.duration_ms
+        if capabilities is not None:
+            report.capabilities = capabilities
 
         # Program hash
         if source_code:

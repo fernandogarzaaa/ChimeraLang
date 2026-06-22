@@ -297,6 +297,33 @@ The Ed25519 layer is **optional**: signing requires `pip install cryptography`, 
 
 ---
 
+## Static Capability Enforcement
+
+`fn` declarations can declare capability constraints with `allow` and `forbidden`. These are now **statically enforced**: the type checker infers which capability-bearing operations each declaration uses — transitively through calls to other declarations — and rejects a program whose body violates its own declared constraints, **before it runs**. This is the compile-time half of the verifiable-by-construction property; the runtime half ships in the certificate layer above.
+
+```bash
+python -m chimera.cli check <file.chimera>                  # type + capability check (exit 0/1)
+python -m chimera.cli run   <file.chimera>                  # refuses to execute a violating program
+python -m chimera.cli run   <file.chimera> --no-capability-check   # downgrade capability violations to warnings
+```
+
+**Capabilities** are grounded in operations that actually exist in the AST/adapter:
+
+| Operation | Capabilities | Where |
+|---|---|---|
+| Agent inquiry (`belief x := inquire { agents: [...] }`) | `model`, `network` | source AST |
+| Tool call (`ToolCallSpec` via the Claude adapter) | `tool`, `network` | host adapter |
+| `print` builtin (console output) | `io` | source AST |
+| All other builtins (`confident`, `consensus`, `len`, …) | none (pure) | — |
+
+**Semantics:** `forbidden c` makes any use of capability `c` an error. When an `allow` clause is present it is a **whitelist** — any used capability not listed is an error; with no `allow` clause, every non-forbidden capability is permitted. Only the canonical names (`network`, `model`, `filesystem`, `tool`, `io`) are treated as capabilities; other `allow`/`forbidden` strings (e.g. `"external tool invocation"`) remain free-form semantic annotations and are ignored by the capability checker. `must:` constraints continue to be enforced at runtime as before.
+
+When a certificate is produced (`prove --out`), its full report carries a `capabilities` block attesting that static checking ran at prove time, plus the `declared`/`used` capability sets per declaration. This attests only that **the static check passed when the certificate was produced** — it is covered by the existing certificate hash and re-verified with no verifier change.
+
+**Guarantee, stated exactly:** declared capability constraints are enforced against *statically known* capability-bearing operations (agent inquiries, tool calls, `print`). It is **not** a runtime sandbox and not a proof of runtime isolation — it cannot constrain effects the type checker cannot see (e.g. capabilities introduced by host code or by operations the language does not yet model).
+
+---
+
 ## Production Status
 
 The ML roadmap surface in `docs/roadmap/CHIMERALANG-ML-SPEC-V2.md` is implemented as a production-ready alpha:
