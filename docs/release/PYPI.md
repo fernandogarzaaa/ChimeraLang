@@ -23,8 +23,8 @@ The project does not need to exist first. PyPI will create it on the first succe
 3. Create and push a version tag:
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git tag v0.2.0
+git push origin v0.2.0
 ```
 
 4. Create a GitHub release for the tag, or run the `Publish to PyPI` workflow manually from GitHub Actions after selecting the release ref.
@@ -37,6 +37,6 @@ Run these commands before tagging:
 ```bash
 python -m pytest
 python -m build
-python -m pip install --force-reinstall --no-deps dist/chimeralang-0.1.0-py3-none-any.whl
+python -m pip install --force-reinstall --no-deps dist/chimeralang-0.2.0-py3-none-any.whl
 python -m chimera.cli check examples/mnist_classifier.chimera
 ```
