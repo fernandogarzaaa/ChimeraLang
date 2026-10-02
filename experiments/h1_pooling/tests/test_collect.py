@@ -46,11 +46,26 @@ def test_row_schema(tmp_path):
     run_collect(out, "--mode", "A", "--models", "claude,gpt", "--seed", "11")
     rows = read_rows(out)
     assert len(rows) == 40 * 2
-    required = {"id", "question", "prompt", "prompt_sha256", "model", "model_id",
+    required = {"id", "question", "question_index", "gold_answers", "dataset",
+                "dataset_sha256", "prompt", "prompt_sha256", "model", "model_id",
                 "sample_index", "backend", "mode", "temperature", "raw",
                 "raw_sha256", "parsed_answer", "parsed_confidence", "parse_ok"}
     for row in rows:
         assert required <= set(row), required - set(row)
         assert row["parse_ok"] is True
+        assert isinstance(row["gold_answers"], list) and row["gold_answers"]
+        assert isinstance(row["question_index"], int) and row["question_index"] >= 0
         assert row["raw_sha256"] == __import__("hashlib").sha256(
             row["raw"].encode()).hexdigest()
+
+
+def test_question_index_matches_dataset_order(tmp_path):
+    out = str(tmp_path / "r.jsonl")
+    run_collect(out, "--mode", "A", "--models", "claude", "--seed", "11")
+    rows = read_rows(out)
+    with open(DATASET) as fh:
+        ids = [json.loads(l)["id"] for l in fh if l.strip()]
+    seen = {}
+    for row in rows:
+        seen.setdefault(row["id"], row["question_index"])
+    assert [seen[qid] for qid in ids] == list(range(len(ids)))

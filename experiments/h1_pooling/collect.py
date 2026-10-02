@@ -13,9 +13,14 @@ Backends:
              without explicit approval.
 
 Response schema (one JSON object per line):
-  id, question, prompt, prompt_sha256, model, sample_index, backend,
+  id, question, question_index, gold_answers, dataset, dataset_sha256,
+  prompt, prompt_sha256, model, model_id, sample_index, backend,
   mode, temperature, raw, raw_sha256, parsed_answer, parsed_confidence,
   parse_ok
+
+question_index is the 0-based position of the question in the dataset
+file, so the analysis can reconstruct dataset order (and the
+calibration split) from responses.jsonl alone.
 """
 from __future__ import annotations
 
@@ -154,10 +159,13 @@ def main() -> int:
 
     dataset = load_dataset(args.dataset)
     done = existing_keys(args.out)
+    with open(args.dataset, "rb") as fh:
+        dataset_sha256 = hashlib.sha256(fh.read()).hexdigest()
+    dataset_name = os.path.basename(args.dataset)
     wrote = 0
     skipped = 0
     with open(args.out, "a", encoding="utf-8") as out:
-        for row in dataset:
+        for qi, row in enumerate(dataset):
             qid = row["id"]
             question = row["question"]
             gold = row["gold_answers"]
@@ -176,6 +184,10 @@ def main() -> int:
                     out.write(json.dumps({
                         "id": qid,
                         "question": question,
+                        "question_index": qi,
+                        "gold_answers": gold,
+                        "dataset": dataset_name,
+                        "dataset_sha256": dataset_sha256,
                         "prompt": prompt,
                         "prompt_sha256": PROMPT_SHA256,
                         "model": model,

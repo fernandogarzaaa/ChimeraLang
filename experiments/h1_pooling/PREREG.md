@@ -54,7 +54,10 @@ Each arm outputs one predicted answer and one claimed probability.
 Questions are used in dataset order. The first 20% form the
 **calibration split** (used only to fit arm C's scaler); the remaining
 80% form the **evaluation split**. All metrics below are computed on
-the evaluation split.
+the evaluation split. Dataset order is reconstructed from the
+`question_index` carried in each responses.jsonl row, so the analysis
+reads only responses.jsonl; the dataset file is needed solely at
+collection time.
 
 ## Correctness
 

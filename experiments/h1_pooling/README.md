@@ -28,8 +28,8 @@ python collect.py --dataset fixture/questions.jsonl \
   --out fixture/responses_a.jsonl --backend synthetic --mode A \
   --models claude,gpt,gemini --seed 8
 cat fixture/responses_b.jsonl fixture/responses_a.jsonl > fixture/responses.jsonl
-python analyze.py --dataset fixture/questions.jsonl \
-  --responses fixture/responses.jsonl --out-json fixture/summary.json
+python analyze.py --responses fixture/responses.jsonl \
+  --out-json fixture/summary.json
 ```
 
 Run the unit tests with `python -m pytest tests/ -q`.
@@ -43,8 +43,10 @@ his dataset path. Then:
 export ANTHROPIC_API_KEY   # from the environment only, never committed
 python collect.py --dataset <path> --out responses.jsonl \
   --backend anthropic --mode B --models claude --k 5
-python analyze.py --dataset <path> --responses responses.jsonl
+python analyze.py --responses responses.jsonl
 ```
 
-Every raw response is stored with its SHA-256; collection is resumable
-and idempotent. `analyze.py` performs no network access.
+Every raw response is stored with its SHA-256; each row also carries
+its gold answers, its position in the dataset, and the dataset
+name/SHA-256, so the analysis reads only responses.jsonl. Collection
+is resumable and idempotent. `analyze.py` performs no network access.

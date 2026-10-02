@@ -1,8 +1,11 @@
 """Analyze H1 pooling experiment responses.
 
-Reads ONLY responses.jsonl (plus the dataset JSONL for question order and
-gold answers). No network. Fully deterministic given the inputs:
-fixed bootstrap seed, sorted iteration, no timestamps.
+Reads ONLY responses.jsonl. No network. Fully deterministic given the
+inputs: fixed bootstrap seed, sorted iteration, no timestamps.
+
+Gold answers, dataset order (for the calibration split), and the
+dataset name/SHA-256 are all carried inside each response row, so the
+analysis never needs the dataset file.
 
 Prints all tables to stdout and optionally writes a summary JSON.
 """
@@ -166,16 +169,6 @@ def logit_clipped(p: float) -> float:
 
 # ------------------------------------------------------------------ io
 
-def load_dataset(path: str) -> list[dict]:
-    rows = []
-    with open(path, "r", encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if line:
-                rows.append(json.loads(line))
-    return rows
-
-
 def load_responses(path: str) -> list[dict]:
     rows = []
     with open(path, "r", encoding="utf-8") as fh:
@@ -184,6 +177,39 @@ def load_responses(path: str) -> list[dict]:
             if line:
                 rows.append(json.loads(line))
     return rows
+
+
+def derive_questions(responses: list[dict]) -> tuple[dict, list[str], list[str], list[str]]:
+    """Gold answers, dataset order, and dataset identity from rows alone.
+
+    Returns (gold_by_id, order, dataset_names, dataset_sha256s).
+    Fails loudly on rows missing the fields or on conflicting values
+    for the same question id.
+    """
+    gold: dict[str, list[str]] = {}
+    index_of: dict[str, int] = {}
+    ds_names: set[str] = set()
+    ds_shas: set[str] = set()
+    for n, r in enumerate(responses):
+        if "gold_answers" not in r or "question_index" not in r:
+            raise SystemExit(
+                f"responses.jsonl row {n} (id={r.get('id')!r}) lacks "
+                "'gold_answers'/'question_index'; re-collect with the "
+                "current collect.py"
+            )
+        qid = r["id"]
+        if qid in gold:
+            if gold[qid] != r["gold_answers"] or index_of[qid] != r["question_index"]:
+                raise SystemExit(
+                    f"conflicting gold_answers/question_index for id={qid!r}"
+                )
+        else:
+            gold[qid] = r["gold_answers"]
+            index_of[qid] = r["question_index"]
+        ds_names.add(r.get("dataset"))
+        ds_shas.add(r.get("dataset_sha256"))
+    order = [qid for _, qid in sorted((index_of[q], q) for q in index_of)]
+    return gold, order, sorted(ds_names), sorted(ds_shas)
 
 
 # ------------------------------------------------------------------ arms
@@ -232,21 +258,19 @@ def safe_pool(confs: list[float]) -> tuple[float, bool]:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Analyze H1 pooling responses")
-    ap.add_argument("--dataset", required=True)
     ap.add_argument("--responses", required=True)
     ap.add_argument("--seed", type=int, default=BOOTSTRAP_SEED)
     ap.add_argument("--bootstrap", type=int, default=BOOTSTRAP_N)
     ap.add_argument("--out-json", default=None)
     args = ap.parse_args()
 
-    dataset = load_dataset(args.dataset)
-    gold = {row["id"]: row["gold_answers"] for row in dataset}
-    order = [row["id"] for row in dataset]
     responses = load_responses(args.responses)
+    gold, order, ds_names, ds_shas = derive_questions(responses)
 
     modes = sorted({r["mode"] for r in responses})
     lines: list[str] = []
-    summary: dict = {"dataset": args.dataset, "responses": args.responses,
+    summary: dict = {"dataset": ds_names, "dataset_sha256": ds_shas,
+                     "responses": args.responses,
                      "seed": args.seed, "bootstrap": args.bootstrap, "modes": {}}
 
     def emit(s: str = "") -> None:
@@ -254,9 +278,10 @@ def main() -> int:
         print(s)
 
     emit("== H1 pooling experiment ==")
-    emit(f"dataset: {args.dataset} ({len(dataset)} questions) | "
-         f"responses: {len(responses)} rows | seed: {args.seed} | "
-         f"bootstrap resamples: {args.bootstrap}")
+    emit(f"dataset: {', '.join(str(x) for x in ds_names)} "
+         f"(sha256: {', '.join(str(x)[:12] for x in ds_shas)}) | "
+         f"questions: {len(order)} | responses: {len(responses)} rows | "
+         f"seed: {args.seed} | bootstrap resamples: {args.bootstrap}")
     emit("")
 
     n_calib = max(1, int(len(order) * 0.2))
