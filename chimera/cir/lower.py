@@ -62,6 +62,12 @@ class CIRLowering:
             if isinstance(decl, BeliefDecl):
                 agents = (list(decl.inquire_expr.agents)
                           if decl.inquire_expr and decl.inquire_expr.agents else [])
+                if len(agents) != len(set(agents)):
+                    dupes = sorted({a for a in agents if agents.count(a) > 1})
+                    self.warnings.append(
+                        f"belief '{decl.name}' lists agent(s) {dupes} more than "
+                        f"once — sources are the same model, evidence is correlated"
+                    )
                 prompt = decl.inquire_expr.prompt if decl.inquire_expr else ""
                 ttl = decl.inquire_expr.ttl if decl.inquire_expr else None
                 # One InquiryNode per agent (fan-out A). Zero or one agent
