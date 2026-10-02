@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **CIR fan-out: one `InquiryNode` per agent.** A belief with
+  `agents: [a, b]` now lowers to two `InquiryNode`s (one per agent) and
+  `resolve` pools them with the shipped `combine_pseudocount` chain.
+  Each agent's belief is tracked as `x@a`, `x@b` in the belief store.
+  Behavior change: multi-agent beliefs now cause N adapter calls, one
+  per agent. Different agents are less correlated, not independent
+  (models share training data), so pooling still overstates the
+  evidence somewhat. Without `resolve`, `guard`/`evolve`/`emit` apply
+  to the first agent's belief only and lowering warns loudly.
+  Duplicate agent names warn that the sources are the same model and
+  the evidence is correlated. The default Anthropic adapter maps agent
+  names to model ids through an explicit `agent_models` dict (default
+  `{"claude": "claude-sonnet-4-6"}`) and raises a clear error naming
+  any unknown agent instead of silently falling back to one model.
+
 ### Fixed
 
 - **Evolve after resolve/guard now re-inquires.** `_exec_evolution` walked only a
