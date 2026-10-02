@@ -1,4 +1,4 @@
-"""Quantum Consensus Virtual Machine for ChimeraLang.
+"""Ensemble-gate Virtual Machine for ChimeraLang.
 
 Executes ChimeraLang AST with:
 - Probabilistic value tracking
@@ -114,7 +114,7 @@ class ExecutionResult:
 
 
 # ---------------------------------------------------------------------------
-# Quantum Consensus VM
+# Ensemble-gate VM
 # ---------------------------------------------------------------------------
 
 class ChimeraVM:
@@ -740,7 +740,8 @@ class ChimeraVM:
         return result
 
     # ------------------------------------------------------------------
-    # Gate execution (QUANTUM CONSENSUS)
+    # Gate execution (ENSEMBLE CONSENSUS: N branches, Gaussian-perturbed
+    # confidences, confidence-weighted collapse)
     # ------------------------------------------------------------------
 
     def _call_gate(self, gate: GateDecl, args: list[ChimeraValue]) -> ChimeraValue:

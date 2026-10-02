@@ -1,6 +1,6 @@
 # ChimeraLang
 
-**A programming language designed for AI cognition** — probabilistic types, quantum consensus gates, directed hallucination, cryptographic integrity proofs, and a Cognitive Intermediate Representation (CIR) with self-evolving symbol emergence.
+**A programming language designed for AI cognition** — probabilistic types, ensemble consensus gates, hallucination detection, cryptographic integrity proofs, and a Cognitive Intermediate Representation (CIR) with self-evolving symbol emergence.
 
 ChimeraLang treats uncertainty, confidence, and epistemic state as **first-class language primitives** rather than bolted-on libraries. Programs in ChimeraLang describe *how an AI should think*, not just what it should compute.
 
@@ -13,7 +13,7 @@ ChimeraLang treats uncertainty, confidence, and epistemic state as **first-class
 | **CIR — Cognitive Intermediate Representation** | A graph-based IR where beliefs flow as Beta distributions through Inquiry → Consensus → Validation → Evolution nodes |
 | **Belief System** | `belief`/`inquire`/`resolve`/`guard`/`evolve` — first-class epistemic constructs backed by pseudocount-addition evidence combination with a conflict check |
 | **Probabilistic Types** | `Confident<T>`, `Explore<T>`, `Converge<T>`, `Provisional<T>` — types that carry confidence scores |
-| **Quantum Consensus Gates** | Multiple candidate values vote under Gaussian noise; the result is the *consensus* of an ensemble |
+| **Ensemble Consensus Gates** | N branches run with Gaussian-perturbed confidences and collapse by confidence-weighted vote |
 | **Symbol Emergence** | Reusable CIR subgraphs discovered automatically via Weisfeiler-Lehman hashing + TF-IDF similarity, evolved by Darwinian fitness competition |
 | **Hallucination Detection** | Inline `detect` blocks + guard nodes with variance-aware Beta distribution checks |
 | **Cryptographic Integrity** | Merkle-chain proofs and gate certificates ensure reasoning traces are tamper-evident |
@@ -182,7 +182,12 @@ After each execution, ChimeraLang automatically extracts reusable CIR subgraphs:
 
 ## VM Path (Existing Language)
 
-### Quantum Consensus Gates
+### Ensemble Consensus Gates
+
+A `gate` runs N branches with Gaussian-perturbed input confidences and
+collapses them by confidence-weighted vote. "Quantum" appears nowhere in
+the syntax or semantics; the mechanism is a stochastic ensemble gate,
+not a quantum algorithm.
 
 ```chimera
 gate consensus_answer(question: Text) -> Converge<Text>
@@ -385,7 +390,7 @@ ChimeraLang/
 │   ├── ast_nodes.py          # AST node hierarchy incl. BeliefDecl, InquireExpr
 │   ├── parser.py             # Recursive-descent parser (both paths)
 │   ├── types.py              # Runtime type system & confidence propagation
-│   ├── vm.py                 # Quantum Consensus VM (fn/gate/goal/reason path)
+│   ├── vm.py                 # Ensemble-gate VM (fn/gate/goal/reason path)
 │   ├── detect.py             # Hallucination detector
 │   ├── integrity.py          # Merkle chains & gate certificates
 │   └── cli.py                # CLI + REPL + automatic CIR/VM dispatch
