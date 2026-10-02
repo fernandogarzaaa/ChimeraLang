@@ -102,6 +102,7 @@ class CIRLowering:
                     max_risk=decl.max_risk,
                     strategy=decl.strategy,
                     target_id=source_id,
+                    max_variance=decl.max_variance,
                 )
                 graph.add_node(val)
                 if source_id:
@@ -166,8 +167,34 @@ class CIRLowering:
     # Pass 3: Belief flow analysis
     # ------------------------------------------------------------------
 
+    def _belief_name_for(self, graph: CIRGraph, nid: str) -> str:
+        """Find the belief name behind a node by walking predecessors back.
+
+        At lowering time a belief's node_id still points at its InquiryNode
+        (consensus/validation rewrite it only at execution), so a guard's
+        direct predecessor may be a consensus node with no belief attached.
+        """
+        seen: set[str] = set()
+        stack = [nid]
+        while stack:
+            cur = stack.pop()
+            if cur in seen:
+                continue
+            seen.add(cur)
+            bs = next(
+                (b for b in graph.belief_store.values() if b.node_id == cur),
+                None,
+            )
+            if bs is not None:
+                return bs.name
+            stack.extend(p.id for p in graph.predecessors(cur))
+        return ""
+
     def _pass_belief_flow_analysis(self, graph: CIRGraph) -> None:
         VARIANCE_WARN_THRESHOLD = 0.08
+        # Legacy default variance limit used by the executor when a guard
+        # does not set max_variance explicitly.
+        DEFAULT_VARIANCE_LIMIT = 0.05
 
         for nid in graph.nodes:
             node = graph.nodes[nid]
@@ -185,3 +212,20 @@ class CIRLowering:
                                 f"({bs.distribution.variance:.4f}) before validation — "
                                 f"consider more inquiry agents or tighter prior"
                             )
+                if node.strategy in ("variance", "both"):
+                    limit = (node.max_variance if node.max_variance is not None
+                             else DEFAULT_VARIANCE_LIMIT)
+                    # Inquiry-produced beliefs use from_confidence with the
+                    # default strength of 10, which caps variance at about
+                    # 0.0227 (more evidence only lowers it). A limit above
+                    # that cap can never fire, so the variance check is dead.
+                    cap = BetaDist.max_variance_for_strength(10.0)
+                    if limit > cap:
+                        target_name = self._belief_name_for(graph, nid)
+                        self.warnings.append(
+                            f"guard on '{target_name or node.target_id}' has an "
+                            f"unreachable variance limit ({limit}); "
+                            f"inquiry-produced beliefs cap variance at "
+                            f"{cap:.4f} (strength 10), so the variance check "
+                            f"can never fire"
+                        )

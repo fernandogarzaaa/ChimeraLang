@@ -642,13 +642,14 @@ class Parser:
         return ResolveStmt(target=target, threshold=threshold, strategy=strategy)
 
     def _parse_guard(self) -> GuardStmt:
-        """guard <name> against hallucination { max_risk: 0.2, strategy: both }"""
+        """guard <name> against hallucination { max_risk: 0.2, strategy: both, max_variance: 0.01 }"""
         self._expect(TokenKind.GUARD)
         target = self._expect(TokenKind.IDENT, "Expected belief name").value
         self._expect(TokenKind.AGAINST, "Expected 'against' after belief name")
         self._advance()  # consume 'hallucination' identifier
         max_risk = 0.2
         strategy = "both"
+        max_variance: float | None = None
         if self._check(TokenKind.LBRACE):
             self._advance()
             self._skip_newlines()
@@ -662,11 +663,14 @@ class Parser:
                     max_risk = float(self._advance().value)
                 elif key == "strategy":
                     strategy = self._advance().value
+                elif key == "max_variance":
+                    max_variance = float(self._advance().value)
                 self._match(TokenKind.COMMA)
                 self._skip_newlines()
             self._expect(TokenKind.RBRACE, "Expected '}' to close guard block")
         self._expect_line_end()
-        return GuardStmt(target=target, max_risk=max_risk, strategy=strategy)
+        return GuardStmt(target=target, max_risk=max_risk, strategy=strategy,
+                         max_variance=max_variance)
 
     def _parse_evolve(self) -> EvolveStmt:
         """evolve <name> until stable { max_iter: 3 }"""

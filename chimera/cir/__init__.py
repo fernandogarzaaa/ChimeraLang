@@ -39,8 +39,10 @@ def run_cir(
        can seed Beta priors instead of starting from Beta(1,1).
     2. Lower the program with the loaded store wired in.
     3. Execute the graph.
-    4. Feed each emitted posterior back to its matching symbol so the
-       store accumulates calibrated evidence across runs.
+    4. Feed each emitted raw observed likelihood back to its matching
+       symbol so the store accumulates calibrated evidence across runs.
+       Only the likelihood is fed, never the posterior, so a seeded prior
+       is not double-counted.
     5. Register the graph as a (new or recurring) symbol and persist.
     """
     store = SymbolStore()
@@ -59,14 +61,16 @@ def run_cir(
     if prompts:
         store.register(graph, prompts=prompts)
 
-    # Feed posteriors back AFTER registration so a fresh symbol can
+    # Feed raw likelihoods back AFTER registration so a fresh symbol can
     # receive its first observation. Only beliefs that originated from
-    # an inquiry have an associated prompt to match against.
+    # an inquiry have an associated prompt to match against, and only the
+    # raw observed likelihood is fed (never the posterior) so a seeded
+    # prior is not double-counted.
     for bs in graph.belief_store.values():
         inq = graph.nodes.get(bs.node_id)
         prompt = getattr(inq, "prompt", "") if inq is not None else ""
-        if prompt:
-            store.record_observation(prompt, bs.distribution)
+        if prompt and bs.observed is not None:
+            store.record_observation(prompt, bs.observed)
 
     if save_symbols:
         store.save_symbols(save_symbols)

@@ -2,8 +2,8 @@
 
 Runs a CIRGraph in topological order:
   - InquiryNode  → calls inquiry_adapter (Claude or mock)
-  - ConsensusNode → Dempster-Shafer combination + BFT validation
-  - ValidationNode → guard: mean >= (1-max_risk) and/or variance <= 0.05
+  - ConsensusNode → pseudocount addition with K conflict check + threshold check
+  - ValidationNode → guard: mean >= (1-max_risk) and/or variance <= limit
   - EvolutionNode → fixed-point loop minimizing KL divergence
   - Temporal decay → stale beliefs regressed toward uniform prior
 """
@@ -158,16 +158,33 @@ class CIRExecutor:
             response = InquiryResponse(confidence=0.5, answer=None)
 
         conf = max(0.0, min(1.0, response.confidence))
-        dist = BetaDist.from_confidence(conf)
+        observed = BetaDist.from_confidence(conf)
         result.trace.append(
-            f"[inquiry] confidence={conf:.3f} -> Beta({dist.alpha:.1f},{dist.beta:.1f})"
+            f"[inquiry] confidence={conf:.3f} -> Beta({observed.alpha:.1f},{observed.beta:.1f})"
         )
 
         bs = next(
             (b for b in graph.belief_store.values() if b.node_id == node.id), None
         )
         if bs is not None:
-            bs.distribution = dist
+            # Combine a seeded prior (from the SymbolStore via lowering)
+            # with the fresh observation by pseudocounts. A Beta(1,1)
+            # prior leaves the observation unchanged, so unseeded runs
+            # behave exactly as before.
+            prior = bs.distribution
+            bs.observed = observed
+            if abs(prior.alpha - 1.0) > 1e-9 or abs(prior.beta - 1.0) > 1e-9:
+                posterior = BetaDist(
+                    alpha=max(prior.alpha + observed.alpha - 1.0, 1e-6),
+                    beta=max(prior.beta + observed.beta - 1.0, 1e-6),
+                )
+                result.trace.append(
+                    f"[inquiry] seeded prior combined -> "
+                    f"Beta({posterior.alpha:.1f},{posterior.beta:.1f})"
+                )
+            else:
+                posterior = observed
+            bs.distribution = posterior
             bs.provenance.append(f"inquired(conf={conf:.3f})")
             if response.answer is not None:
                 bs.answer = response.answer
@@ -191,23 +208,27 @@ class CIRExecutor:
             result.trace.append("[consensus] no input beliefs — skipping")
             return
 
-        combined = input_beliefs[0][1]
-        for _, other_dist in input_beliefs[1:]:
-            try:
-                combined = combined.combine_ds(other_dist)
-            except ValueError as e:
-                result.trace.append(f"[consensus] DS conflict: {e}")
-                result.guard_violations.append(f"consensus conflict: {e}")
-                return
+        if len(input_beliefs) == 1:
+            # A single input is not a combination; say so in the trace.
+            result.trace.append("[consensus] single source, no combination performed")
+            combined = input_beliefs[0][1]
+        else:
+            combined = input_beliefs[0][1]
+            for _, other_dist in input_beliefs[1:]:
+                try:
+                    combined = combined.combine_pseudocount(other_dist)
+                except ValueError as e:
+                    result.trace.append(f"[consensus] combination conflict: {e}")
+                    result.guard_violations.append(f"consensus conflict: {e}")
+                    return
+            result.trace.append(
+                f"[consensus] combined mean={combined.mean:.3f} variance={combined.variance:.4f}"
+            )
 
         if combined.mean < node.threshold:
             msg = f"consensus mean {combined.mean:.3f} below threshold {node.threshold}"
             result.trace.append(f"[consensus] BELOW THRESHOLD — {msg}")
             result.guard_violations.append(msg)
-
-        result.trace.append(
-            f"[consensus] combined mean={combined.mean:.3f} variance={combined.variance:.4f}"
-        )
 
         for bs in graph.belief_store.values():
             if bs.node_id in node.input_ids:
@@ -216,7 +237,12 @@ class CIRExecutor:
                 bs.provenance.append(f"consensus({node.strategy},mean={combined.mean:.3f})")
 
     def _exec_validation(self, node: ValidationNode, graph: CIRGraph, result: CIRResult) -> None:
-        result.trace.append(f"[guard] max_risk={node.max_risk} strategy={node.strategy}")
+        limit = (f"max_variance={node.max_variance}"
+                 if node.max_variance is not None else "")
+        result.trace.append(
+            f"[guard] max_risk={node.max_risk} strategy={node.strategy}"
+            + (f" {limit}" if limit else "")
+        )
         bs = next(
             (b for b in graph.belief_store.values() if b.node_id == node.target_id),
             None,
@@ -234,7 +260,12 @@ class CIRExecutor:
                 violations.append(f"mean {dist.mean:.3f} < required {required_mean:.3f}")
 
         if node.strategy in ("variance", "both"):
-            max_variance = 0.05
+            # Explicit per-guard limit when set; otherwise the legacy 0.05
+            # default. Note the default can never fire on beliefs produced
+            # by BetaDist.from_confidence (strength 10 caps variance at
+            # about 0.0227); the lowering pass warns about this.
+            max_variance = (node.max_variance if node.max_variance is not None
+                            else 0.05)
             if dist.variance > max_variance:
                 violations.append(f"variance {dist.variance:.4f} > allowed {max_variance}")
 
@@ -250,10 +281,41 @@ class CIRExecutor:
             )
             bs.node_id = node.id
 
+    def _origin_inquiry(
+        self, graph: CIRGraph, start_id: str
+    ) -> tuple[InquiryNode | None, list[str]]:
+        """Walk predecessors back to the originating InquiryNode.
+
+        Returns the inquiry node (or None) plus the chain of node ids
+        walked from ``start_id``. Consensus and validation nodes rewrite
+        ``BeliefState.node_id`` to their own id, so an evolve entry may
+        point at a non-inquiry node; the prompt and agents needed for
+        re-inquiry live on the originating InquiryNode.
+        """
+        chain: list[str] = []
+        seen: set[str] = set()
+        nid: str | None = start_id
+        while nid and nid not in seen:
+            seen.add(nid)
+            chain.append(nid)
+            node = graph.nodes.get(nid)
+            if isinstance(node, InquiryNode):
+                return node, chain
+            preds = graph.predecessors(nid)
+            nid = preds[0].id if preds else None
+        return None, chain
+
     def _exec_evolution(self, node: EvolutionNode, graph: CIRGraph, result: CIRResult) -> None:
         result.trace.append(f"[evolve] condition={node.condition} max_iter={node.max_iter}")
+        inq_node, chain = self._origin_inquiry(graph, node.subgraph_entry)
+        if inq_node is None:
+            result.trace.append("[evolve] no originating inquiry found — skipping")
+            return
+        # Consensus and validation rewrite BeliefState.node_id to their own
+        # node id; on guard failure the belief still points at the inquiry.
+        # Accept any belief along the chain back to the inquiry.
         bs = next(
-            (b for b in graph.belief_store.values() if b.node_id == node.subgraph_entry),
+            (b for b in graph.belief_store.values() if b.node_id in chain),
             None,
         )
         if bs is None:
@@ -266,32 +328,28 @@ class CIRExecutor:
 
         for i in range(node.max_iter):
             result.evolution_iters += 1
-            inq_node = graph.nodes.get(node.subgraph_entry)
-            if isinstance(inq_node, InquiryNode):
-                try:
-                    response = _normalize_response(
-                        self._adapter(inq_node.prompt, inq_node.agents)
-                    )
-                    conf = max(0.0, min(1.0, response.confidence))
-                    if response.answer is not None:
-                        bs.answer = response.answer
-                except Exception:
-                    conf = bs.distribution.mean
-
-                posterior = BetaDist.from_confidence(conf)
-                kl = posterior.kl_divergence(prior)
-                result.trace.append(
-                    f"[evolve] iter={i+1} KL={kl:.5f} mean={posterior.mean:.3f}"
+            try:
+                response = _normalize_response(
+                    self._adapter(inq_node.prompt, inq_node.agents)
                 )
-                if kl < KL_THRESHOLD:
-                    converged = True
-                    bs.distribution = posterior
-                    bs.provenance.append(f"evolved(iters={i+1},converged=True)")
-                    break
-                prior = posterior
+                conf = max(0.0, min(1.0, response.confidence))
+                if response.answer is not None:
+                    bs.answer = response.answer
+            except Exception:
+                conf = bs.distribution.mean
+
+            posterior = BetaDist.from_confidence(conf)
+            kl = posterior.kl_divergence(prior)
+            result.trace.append(
+                f"[evolve] iter={i+1} KL={kl:.5f} mean={posterior.mean:.3f}"
+            )
+            if kl < KL_THRESHOLD:
+                converged = True
                 bs.distribution = posterior
-            else:
+                bs.provenance.append(f"evolved(iters={i+1},converged=True)")
                 break
+            prior = posterior
+            bs.distribution = posterior
 
         result.converged = converged
         bs.node_id = node.id

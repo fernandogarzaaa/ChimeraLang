@@ -5,6 +5,41 @@ All notable changes to ChimeraLang are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Evolve after resolve/guard now re-inquires.** `_exec_evolution` walked only a
+  `subgraph_entry` that had to be an `InquiryNode`, so `evolve` after `resolve`
+  or `guard` silently ran zero adapter calls and never converged. It now walks
+  predecessors back to the originating `InquiryNode` and accepts any belief on
+  that chain (consensus/validation rewrite `BeliefState.node_id`).
+- **Guard variance limit is now configurable.** `guard ... { max_variance: 0.01 }`
+  is parsed, lowered, and enforced (`GuardStmt`, `ValidationNode`, executor).
+  Absent, the legacy 0.05 default applies. New lowering warning when a guard's
+  variance limit is unreachable: `BetaDist.from_confidence` (strength 10) caps
+  variance at about 0.0227, so the default 0.05 check could never fire.
+- **Honest evidence combination.** `BetaDist.combine_ds` was documented as
+  Dempster-Shafer combination but implements pseudocount addition
+  (`alpha + alpha' - 1`, `beta + beta' - 1`) with a K conflict check. The
+  implementation is now `combine_pseudocount` with an honest docstring;
+  `combine_ds` remains as a backward-compatible alias. Single-source `resolve`
+  now traces "single source, no combination performed" instead of a
+  misleading "combined mean".
+- **Seeded priors are actually used.** `_exec_inquiry` overwrote the
+  SymbolStore-seeded prior; it now combines prior and observation by
+  pseudocounts (a `Beta(1,1)` prior leaves behavior unchanged). The raw
+  observed likelihood is stored on `BeliefState.observed` and only that is fed
+  back to the store, fixing double counting of the prior. `Symbol` prior
+  strength is capped at the named constant `MAX_PRIOR_STRENGTH = 100.0`
+  (proportional rescale, mean preserved).
+
+### Changed
+
+- README belief-reasoning trace, guard/consensus sections, and test count
+  updated to match the implementation. Added: pooled beliefs assume
+  independent sources; repeated calls to the same model are correlated.
+
 ## [0.2.0] - 2026-06-22
 
 This release makes ChimeraLang's reasoning **verifiable by construction**: programs

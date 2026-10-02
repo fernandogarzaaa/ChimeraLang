@@ -318,6 +318,9 @@ class GuardStmt(Statement):
     target: str = ""
     max_risk: float = 0.2
     strategy: str = "both"
+    # Optional explicit variance limit. When None, the executor falls back
+    # to the legacy 0.05 default for backward compatibility.
+    max_variance: float | None = None
 
 
 @dataclass
