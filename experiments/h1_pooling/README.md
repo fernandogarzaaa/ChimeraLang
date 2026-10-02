@@ -26,7 +26,7 @@ python collect.py --dataset fixture/questions.jsonl \
   --models claude --k 5 --seed 7
 python collect.py --dataset fixture/questions.jsonl \
   --out fixture/responses_a.jsonl --backend synthetic --mode A \
-  --models claude,gpt,gemini --seed 7
+  --models claude,gpt,gemini --seed 8
 cat fixture/responses_b.jsonl fixture/responses_a.jsonl > fixture/responses.jsonl
 python analyze.py --dataset fixture/questions.jsonl \
   --responses fixture/responses.jsonl --out-json fixture/summary.json
