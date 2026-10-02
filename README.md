@@ -11,7 +11,7 @@ ChimeraLang treats uncertainty, confidence, and epistemic state as **first-class
 | Feature | Description |
 |---|---|
 | **CIR — Cognitive Intermediate Representation** | A graph-based IR where beliefs flow as Beta distributions through Inquiry → Consensus → Validation → Evolution nodes |
-| **Belief System** | `belief`/`inquire`/`resolve`/`guard`/`evolve` — first-class epistemic constructs backed by Dempster-Shafer evidence combination |
+| **Belief System** | `belief`/`inquire`/`resolve`/`guard`/`evolve` — first-class epistemic constructs backed by pseudocount-addition evidence combination with a conflict check |
 | **Probabilistic Types** | `Confident<T>`, `Explore<T>`, `Converge<T>`, `Provisional<T>` — types that carry confidence scores |
 | **Quantum Consensus Gates** | Multiple candidate values vote under Gaussian noise; the result is the *consensus* of an ensemble |
 | **Symbol Emergence** | Reusable CIR subgraphs discovered automatically via Weisfeiler-Lehman hashing + TF-IDF similarity, evolved by Darwinian fitness competition |
@@ -99,11 +99,16 @@ python -m chimera.cli run examples/belief_reasoning.chimera --trace
 — CIR Reasoning Trace —
   [inquiry] prompt='What are the primary causes...' agents=['claude']
   [inquiry] confidence=0.750 -> Beta(7.5,2.5)
+  [inquiry] answer recorded (72 chars)
   [consensus] strategy=dempster_shafer threshold=0.75
-  [consensus] combined mean=0.750 variance=0.0170
+  [consensus] single source, no combination performed
   [guard] max_risk=0.25 strategy=both
   [guard] PASSED — mean=0.750 variance=0.0170
   [evolve] condition=stable max_iter=3
+  [evolve] iter=1 KL=0.00000 mean=0.750
+
+— Lowering Warnings —
+  guard on 'cause' has an unreachable variance limit (0.05); inquiry-produced beliefs cap variance at 0.0227 (strength 10), so the variance check can never fire
 
 chimera: examples/belief_reasoning.chimera — CIR executed in 0.1ms
 ```
@@ -147,13 +152,13 @@ Beliefs are **Beta distributions** `Beta(α, β)` — not scalar floats. This me
 - Low pseudocounts = high variance = little evidence = uncertain belief
 - `inquire` converts a confidence score to `Beta(conf×10, (1-conf)×10)`
 
-### Dempster-Shafer consensus (`resolve`)
+### Evidence combination (`resolve`)
 
-`resolve` combines N beliefs using DS evidence combination — not a naive weighted average. When two sources conflict (one says very high, other says very low), a `ConflictException` is raised rather than silently averaging to 0.5.
+`resolve` pools beliefs by pseudocount addition — `alpha + alpha' - 1`, `beta + beta' - 1` — after a Dempster-style conflict check. When the conflict coefficient K exceeds the threshold, a conflict error is raised rather than silently merging. This is not formal Dempster-Shafer combination; the `dempster_shafer` strategy label is kept for language compatibility and `BetaDist.combine_ds` remains as a backward-compatible alias for `combine_pseudocount`. Pooled beliefs assume independent sources; repeated calls to the same model are correlated, so pooling them overstates the evidence.
 
 ### Guard (`guard`)
 
-`guard` checks: `mean ≥ (1 − max_risk)` AND `variance ≤ 0.05`. A belief that's above the mean threshold but wildly uncertain still fails the variance check.
+`guard` checks: `mean >= (1 - max_risk)` AND `variance <= max_variance`. `max_variance` is optional and defaults to 0.05 for backward compatibility. Note the default 0.05 can never fire on inquiry-produced beliefs: `BetaDist.from_confidence` uses strength 10, which caps variance at about 0.0227. The lowering pass warns when a guard's variance limit is unreachable. Set an explicit `max_variance` (e.g. `guard v against hallucination { max_risk: 0.2, strategy: variance, max_variance: 0.01 }`) for an enforceable variance check.
 
 ### Free Energy evolution (`evolve`)
 
@@ -383,7 +388,7 @@ ChimeraLang/
 ├── examples/
 ├── spec/SPEC.md
 ├── paper/chimeralang.tex
-├── tests/                    # 106 tests (60 VM + 46 CIR)
+├── tests/                    # 314 tests (310 passing, 4 env-dependent skips: torch, llvm-as)
 └── pyproject.toml
 ```
 
@@ -394,7 +399,7 @@ ChimeraLang/
 | Aspect | Traditional Languages | ChimeraLang |
 |---|---|---|
 | Values | Deterministic | Beta distributions carrying full uncertainty |
-| Evidence combination | N/A | Dempster-Shafer (conflict-aware, not naive averaging) |
+| Evidence combination | N/A | Pseudocount addition with conflict check (not naive averaging) |
 | Execution | Single-path | Ensemble consensus + CIR belief graph |
 | Correctness | Tests/assertions | Continuous guard nodes + hallucination detection |
 | Auditability | Logs | Cryptographic Merkle proofs + full reasoning trace |

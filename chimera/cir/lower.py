@@ -167,6 +167,29 @@ class CIRLowering:
     # Pass 3: Belief flow analysis
     # ------------------------------------------------------------------
 
+    def _belief_name_for(self, graph: CIRGraph, nid: str) -> str:
+        """Find the belief name behind a node by walking predecessors back.
+
+        At lowering time a belief's node_id still points at its InquiryNode
+        (consensus/validation rewrite it only at execution), so a guard's
+        direct predecessor may be a consensus node with no belief attached.
+        """
+        seen: set[str] = set()
+        stack = [nid]
+        while stack:
+            cur = stack.pop()
+            if cur in seen:
+                continue
+            seen.add(cur)
+            bs = next(
+                (b for b in graph.belief_store.values() if b.node_id == cur),
+                None,
+            )
+            if bs is not None:
+                return bs.name
+            stack.extend(p.id for p in graph.predecessors(cur))
+        return ""
+
     def _pass_belief_flow_analysis(self, graph: CIRGraph) -> None:
         VARIANCE_WARN_THRESHOLD = 0.08
         # Legacy default variance limit used by the executor when a guard
@@ -177,15 +200,12 @@ class CIRLowering:
             node = graph.nodes[nid]
             if isinstance(node, ValidationNode):
                 preds = graph.predecessors(nid)
-                target_name = ""
                 for pred in preds:
                     bs = next(
                         (b for b in graph.belief_store.values() if b.node_id == pred.id),
                         None,
                     )
                     if bs is not None:
-                        if not target_name:
-                            target_name = bs.name
                         if bs.distribution.variance > VARIANCE_WARN_THRESHOLD:
                             self.warnings.append(
                                 f"belief '{bs.name}' has high variance "
@@ -201,6 +221,7 @@ class CIRLowering:
                     # that cap can never fire, so the variance check is dead.
                     cap = BetaDist.max_variance_for_strength(10.0)
                     if limit > cap:
+                        target_name = self._belief_name_for(graph, nid)
                         self.warnings.append(
                             f"guard on '{target_name or node.target_id}' has an "
                             f"unreachable variance limit ({limit}); "
