@@ -48,6 +48,23 @@ class CIRLowering:
     # Pass 1: Structural
     # ------------------------------------------------------------------
 
+    def _first_source_or_warn(
+        self, belief_name: str, source_ids: list[str], op: str
+    ) -> str:
+        """Pick the node id a guard/evolve/emit applies to.
+
+        With several source ids and no intervening resolve there is no
+        pooled belief; the op applies to the FIRST agent's belief only,
+        loudly. resolve is the blessed path to a single pooled belief.
+        """
+        if len(source_ids) > 1:
+            self.warnings.append(
+                f"belief '{belief_name}' has {len(source_ids)} agents but "
+                f"no resolve — '{op}' applies to the first agent's belief "
+                f"only; add 'resolve {belief_name} ...' to pool all agents"
+            )
+        return source_ids[0] if source_ids else ""
+
     def _pass_structural(self, program: object, graph: CIRGraph) -> None:
         from chimera.ast_nodes import (
             BeliefDecl, EmitStmt, EvolveStmt, GuardStmt, ResolveStmt,
@@ -128,7 +145,7 @@ class CIRLowering:
 
             elif isinstance(decl, GuardStmt):
                 source_ids = belief_node_map.get(decl.target, [])
-                source_id = source_ids[0] if source_ids else ""
+                source_id = self._first_source_or_warn(decl.target, source_ids, "guard")
                 val = ValidationNode(
                     max_risk=decl.max_risk,
                     strategy=decl.strategy,
@@ -145,7 +162,7 @@ class CIRLowering:
 
             elif isinstance(decl, EvolveStmt):
                 source_ids = belief_node_map.get(decl.target, [])
-                source_id = source_ids[0] if source_ids else ""
+                source_id = self._first_source_or_warn(decl.target, source_ids, "evolve")
                 evo = EvolutionNode(
                     condition=decl.condition,
                     max_iter=decl.max_iter,
@@ -163,8 +180,10 @@ class CIRLowering:
                 from chimera.ast_nodes import Identifier
                 if isinstance(decl.value, Identifier):
                     node_ids = belief_node_map.get(decl.value.name, [])
-                    if node_ids:
-                        graph.emit_ids.append(node_ids[0])
+                    node_id = self._first_source_or_warn(
+                        decl.value.name, node_ids, "emit")
+                    if node_id:
+                        graph.emit_ids.append(node_id)
 
     # ------------------------------------------------------------------
     # Pass 2: Dead belief elimination
