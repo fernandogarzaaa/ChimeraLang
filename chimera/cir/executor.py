@@ -250,10 +250,41 @@ class CIRExecutor:
             )
             bs.node_id = node.id
 
+    def _origin_inquiry(
+        self, graph: CIRGraph, start_id: str
+    ) -> tuple[InquiryNode | None, list[str]]:
+        """Walk predecessors back to the originating InquiryNode.
+
+        Returns the inquiry node (or None) plus the chain of node ids
+        walked from ``start_id``. Consensus and validation nodes rewrite
+        ``BeliefState.node_id`` to their own id, so an evolve entry may
+        point at a non-inquiry node; the prompt and agents needed for
+        re-inquiry live on the originating InquiryNode.
+        """
+        chain: list[str] = []
+        seen: set[str] = set()
+        nid: str | None = start_id
+        while nid and nid not in seen:
+            seen.add(nid)
+            chain.append(nid)
+            node = graph.nodes.get(nid)
+            if isinstance(node, InquiryNode):
+                return node, chain
+            preds = graph.predecessors(nid)
+            nid = preds[0].id if preds else None
+        return None, chain
+
     def _exec_evolution(self, node: EvolutionNode, graph: CIRGraph, result: CIRResult) -> None:
         result.trace.append(f"[evolve] condition={node.condition} max_iter={node.max_iter}")
+        inq_node, chain = self._origin_inquiry(graph, node.subgraph_entry)
+        if inq_node is None:
+            result.trace.append("[evolve] no originating inquiry found — skipping")
+            return
+        # Consensus and validation rewrite BeliefState.node_id to their own
+        # node id; on guard failure the belief still points at the inquiry.
+        # Accept any belief along the chain back to the inquiry.
         bs = next(
-            (b for b in graph.belief_store.values() if b.node_id == node.subgraph_entry),
+            (b for b in graph.belief_store.values() if b.node_id in chain),
             None,
         )
         if bs is None:
@@ -266,32 +297,28 @@ class CIRExecutor:
 
         for i in range(node.max_iter):
             result.evolution_iters += 1
-            inq_node = graph.nodes.get(node.subgraph_entry)
-            if isinstance(inq_node, InquiryNode):
-                try:
-                    response = _normalize_response(
-                        self._adapter(inq_node.prompt, inq_node.agents)
-                    )
-                    conf = max(0.0, min(1.0, response.confidence))
-                    if response.answer is not None:
-                        bs.answer = response.answer
-                except Exception:
-                    conf = bs.distribution.mean
-
-                posterior = BetaDist.from_confidence(conf)
-                kl = posterior.kl_divergence(prior)
-                result.trace.append(
-                    f"[evolve] iter={i+1} KL={kl:.5f} mean={posterior.mean:.3f}"
+            try:
+                response = _normalize_response(
+                    self._adapter(inq_node.prompt, inq_node.agents)
                 )
-                if kl < KL_THRESHOLD:
-                    converged = True
-                    bs.distribution = posterior
-                    bs.provenance.append(f"evolved(iters={i+1},converged=True)")
-                    break
-                prior = posterior
+                conf = max(0.0, min(1.0, response.confidence))
+                if response.answer is not None:
+                    bs.answer = response.answer
+            except Exception:
+                conf = bs.distribution.mean
+
+            posterior = BetaDist.from_confidence(conf)
+            kl = posterior.kl_divergence(prior)
+            result.trace.append(
+                f"[evolve] iter={i+1} KL={kl:.5f} mean={posterior.mean:.3f}"
+            )
+            if kl < KL_THRESHOLD:
+                converged = True
                 bs.distribution = posterior
-            else:
+                bs.provenance.append(f"evolved(iters={i+1},converged=True)")
                 break
+            prior = posterior
+            bs.distribution = posterior
 
         result.converged = converged
         bs.node_id = node.id
