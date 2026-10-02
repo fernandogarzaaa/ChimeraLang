@@ -47,10 +47,14 @@ DEFAULT_AGENT_MODELS = {"claude": "claude-sonnet-4-6"}
 
 # Short agent names -> Nebius Token Factory model ids. Three different
 # model families for mode A (distinct, less correlated sources).
+# NOTE: DeepSeek-V3.2-Exp and Kimi-K2.5 404 on the chat endpoint, and
+# several others (Kimi-K2.6, GLM-5.1, gpt-oss-120b) are reasoning-first
+# and return null content within a small max_tokens budget, so the mode
+# A set uses direct-answer models verified live on 2026-10-02.
 DEFAULT_NEBIUS_MODELS = {
     "qwen3-235b": "Qwen/Qwen3-235B-A22B-Instruct-2507",
-    "deepseek-v32": "deepseek-ai/DeepSeek-V3.2-Exp",
-    "kimi-k2.5": "moonshotai/Kimi-K2.5",
+    "deepseek-v4pro": "deepseek-ai/DeepSeek-V4-Pro",
+    "gemma-3-27b": "google/gemma-3-27b-it",
 }
 
 NEBIUS_HOST = "api.tokenfactory.nebius.com"

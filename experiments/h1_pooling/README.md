@@ -54,7 +54,7 @@ python analyze.py --responses runs/<date>/responses.jsonl \
 ```
 
 Mode B agent `qwen3-235b` maps to Qwen/Qwen3-235B-A22B-Instruct-2507;
-mode A adds deepseek-ai/DeepSeek-V3.2-Exp and moonshotai/Kimi-K2.5
+mode A adds deepseek-ai/DeepSeek-V4-Pro and google/gemma-3-27b-it
 (three distinct model families). The prereg names no provider, so this
 is not a deviation; model ids are recorded in every row and the run
 manifest.
