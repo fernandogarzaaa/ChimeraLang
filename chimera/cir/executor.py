@@ -158,16 +158,33 @@ class CIRExecutor:
             response = InquiryResponse(confidence=0.5, answer=None)
 
         conf = max(0.0, min(1.0, response.confidence))
-        dist = BetaDist.from_confidence(conf)
+        observed = BetaDist.from_confidence(conf)
         result.trace.append(
-            f"[inquiry] confidence={conf:.3f} -> Beta({dist.alpha:.1f},{dist.beta:.1f})"
+            f"[inquiry] confidence={conf:.3f} -> Beta({observed.alpha:.1f},{observed.beta:.1f})"
         )
 
         bs = next(
             (b for b in graph.belief_store.values() if b.node_id == node.id), None
         )
         if bs is not None:
-            bs.distribution = dist
+            # Combine a seeded prior (from the SymbolStore via lowering)
+            # with the fresh observation by pseudocounts. A Beta(1,1)
+            # prior leaves the observation unchanged, so unseeded runs
+            # behave exactly as before.
+            prior = bs.distribution
+            bs.observed = observed
+            if abs(prior.alpha - 1.0) > 1e-9 or abs(prior.beta - 1.0) > 1e-9:
+                posterior = BetaDist(
+                    alpha=max(prior.alpha + observed.alpha - 1.0, 1e-6),
+                    beta=max(prior.beta + observed.beta - 1.0, 1e-6),
+                )
+                result.trace.append(
+                    f"[inquiry] seeded prior combined -> "
+                    f"Beta({posterior.alpha:.1f},{posterior.beta:.1f})"
+                )
+            else:
+                posterior = observed
+            bs.distribution = posterior
             bs.provenance.append(f"inquired(conf={conf:.3f})")
             if response.answer is not None:
                 bs.answer = response.answer

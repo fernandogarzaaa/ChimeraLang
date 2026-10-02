@@ -208,6 +208,10 @@ class BeliefState:
     timestamp: float = field(default_factory=time.time)
     node_id: str = ""
     answer: str | None = None
+    # Raw likelihood from the inquiry adapter, before any seeded-prior
+    # combination. run_cir feeds only this (never the posterior) back to
+    # the SymbolStore so the prior is not double-counted.
+    observed: BetaDist | None = None
 
     def is_stale(self) -> bool:
         if self.ttl is None:
@@ -229,6 +233,7 @@ class BeliefState:
             timestamp=self.timestamp,
             node_id=self.node_id,
             answer=self.answer,
+            observed=self.observed,
         )
 
 

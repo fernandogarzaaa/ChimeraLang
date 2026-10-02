@@ -13,7 +13,7 @@ import random
 import time
 from collections import Counter
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, ClassVar
 
 from chimera.cir.nodes import BetaDist, CIRGraph, InquiryNode
 
@@ -75,6 +75,13 @@ def extract_subgraphs(graph: CIRGraph, min_length: int = 2) -> list[CIRGraph]:
 
 @dataclass
 class Symbol:
+    # Maximum total pseudocount (prior_alpha + prior_beta) a symbol's
+    # running prior may accumulate. record_observation rescales
+    # proportionally past this bound, so repeated identical self-reports
+    # cannot grow the prior without bound while the calibrated mean is
+    # preserved.
+    MAX_PRIOR_STRENGTH: ClassVar[float] = 100.0
+
     wl_hash: str
     node_types: list[str]
     edge_types: list[str]
@@ -84,8 +91,8 @@ class Symbol:
     created_at: float = field(default_factory=time.time)
     edge_weight_mutation: float = 0.0
     # Cumulative belief observations attributed to this symbol. Each
-    # successful CIR run feeds its posterior back here so future
-    # lowerings can use a calibrated prior instead of Beta(1,1).
+    # successful CIR run feeds its raw observed likelihood back here so
+    # future lowerings can use a calibrated prior instead of Beta(1,1).
     prior_alpha: float = 1.0
     prior_beta: float = 1.0
 
@@ -113,14 +120,22 @@ class Symbol:
                         beta=max(self.prior_beta, 1e-6))
 
     def record_observation(self, dist: BetaDist) -> None:
-        """Accumulate a posterior into this symbol's running prior.
+        """Accumulate an observed likelihood into this symbol's running prior.
 
         Uses pseudo-count addition: alpha += observed_alpha - 1,
         beta  += observed_beta  - 1 so that a Beta(1,1) observation
-        (no information) is a no-op.
+        (no information) is a no-op. Callers must pass the raw observed
+        likelihood, never a posterior that already includes this prior,
+        to avoid double counting. Total strength is capped at
+        MAX_PRIOR_STRENGTH by proportional rescaling (mean preserved).
         """
         self.prior_alpha = max(self.prior_alpha + (dist.alpha - 1.0), 1e-6)
         self.prior_beta = max(self.prior_beta + (dist.beta - 1.0), 1e-6)
+        strength = self.prior_alpha + self.prior_beta
+        if strength > self.MAX_PRIOR_STRENGTH:
+            scale = self.MAX_PRIOR_STRENGTH / strength
+            self.prior_alpha = max(self.prior_alpha * scale, 1e-6)
+            self.prior_beta = max(self.prior_beta * scale, 1e-6)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -264,7 +279,7 @@ class SymbolStore:
 
     def record_observation(self, prompt: str, dist: BetaDist,
                            min_similarity: float = 0.7) -> Symbol | None:
-        """Feed a posterior back to the symbol whose prompts best match.
+        """Feed an observed likelihood back to the symbol whose prompts best match.
 
         Returns the updated symbol, or None if no symbol clears the
         similarity floor (in which case the caller may want to register

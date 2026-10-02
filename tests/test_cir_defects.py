@@ -212,5 +212,13 @@ class TestSeededPriors:
             sym.record_observation(BetaDist.from_confidence(0.9))
         strength = sym.prior_alpha + sym.prior_beta
         assert strength <= Symbol.MAX_PRIOR_STRENGTH + 1e-9
-        # Capping rescales; the calibrated mean must survive.
-        assert sym.prior().mean == pytest.approx(0.9, abs=0.05)
+        # Repeated positive evidence still concentrates the prior.
+        assert 0.99 < sym.prior().mean < 1.0
+
+    def test_prior_cap_preserves_mean_at_engagement(self):
+        # Rescaling on cap engagement must not distort the calibrated mean.
+        sym = Symbol(wl_hash="x", node_types=[], edge_types=[],
+                     prompts=["q"], prior_alpha=90.0, prior_beta=10.0)
+        sym.record_observation(BetaDist.from_confidence(0.9))  # adds (8, 0)
+        assert sym.prior_alpha + sym.prior_beta == pytest.approx(100.0)
+        assert sym.prior().mean == pytest.approx(98 / 108)
