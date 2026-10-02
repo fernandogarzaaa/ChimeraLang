@@ -1,0 +1,255 @@
+(* =====================================================================
+   ChimeraLang Grammar (EBNF)
+   ---------------------------------------------------------------------
+   Formal syntax for the ChimeraLang language as implemented in
+   chimera/lexer.py (tokens) and chimera/parser.py (recursive descent).
+   This document is normative for the core language and the CIR belief
+   constructs; the ML surface (model / train / layer blocks) is
+   summarized because it shares the generic key-value block machinery.
+
+   Notation:  =  definition        ;  end of rule
+              |  alternation       [ ] optional
+              { } repetition       ( ) grouping
+              "x" literal keyword  (* comment *)
+   Terminals come from the lexer: IDENT, STRING_LIT, INT_LIT, FLOAT_LIT,
+   and single-character punctuation. NEWLINE is significant: most
+   statements end at end-of-line.
+   ===================================================================== *)
+
+program            = { top_level } ;
+
+(* ------------------------------------------------------------------ *)
+(* Top level: declarations, CIR statements, or plain statements        *)
+(* ------------------------------------------------------------------ *)
+
+top_level          = fn_decl
+                   | gate_decl
+                   | goal_decl
+                   | reason_decl
+                   | val_decl
+                   | belief_decl
+                   | resolve_stmt
+                   | guard_stmt
+                   | evolve_stmt
+                   | symbol_decl
+                   | import_stmt
+                   | ml_decl
+                   | statement ;
+
+(* ------------------------------------------------------------------ *)
+(* Functions                                                           *)
+(* ------------------------------------------------------------------ *)
+
+fn_decl            = "fn" , IDENT , "(" , [ param_list ] , ")"
+                   , [ "->" , type_expr ] , NEWLINE
+                   , { constraint | statement }
+                   , "end" , NEWLINE ;
+
+param_list         = param , { "," , param } ;
+param              = IDENT , [ ":" , type_expr ] ;
+
+constraint         = "must" , ":" , NEWLINE , expr , NEWLINE
+                   | "allow" , ":" , NEWLINE , { STRING_LIT , NEWLINE }
+                   | "forbidden" , ":" , NEWLINE , { STRING_LIT , NEWLINE } ;
+
+(* ------------------------------------------------------------------ *)
+(* Ensemble gate: N branches run with Gaussian-perturbed confidences    *)
+(* (sigma 0.05 on inputs) and collapse by confidence-weighted vote.    *)
+(* The keyword is "gate"; "quantum" appears only in prose, never in    *)
+(* syntax.                                                             *)
+(* ------------------------------------------------------------------ *)
+
+gate_decl          = "gate" , IDENT , "(" , [ param_list ] , ")"
+                   , [ "->" , type_expr ] , NEWLINE
+                   , { gate_option | statement }
+                   , "end" , NEWLINE ;
+
+gate_option        = "branches" , ":" , INT_LIT , NEWLINE
+                   | "collapse" , ":" , IDENT , NEWLINE
+                   | "threshold" , ":" , number , NEWLINE
+                   | "fallback" , ":" , IDENT , NEWLINE ;
+
+(* ------------------------------------------------------------------ *)
+(* Goal / reason / val                                                 *)
+(* ------------------------------------------------------------------ *)
+
+goal_decl          = "goal" , STRING_LIT , NEWLINE
+                   , { goal_option | statement }
+                   , "end" , NEWLINE ;
+
+goal_option        = IDENT , ":" , expr , NEWLINE ;
+
+reason_decl        = "reason" , "about" , "(" , IDENT , ")" , NEWLINE
+                   , { reason_option | statement }
+                   , "end" , NEWLINE ;
+
+reason_option      = IDENT , ":" , expr , NEWLINE ;
+
+val_decl           = "val" , IDENT , "=" , expr , NEWLINE ;
+
+(* ------------------------------------------------------------------ *)
+(* CIR belief constructs                                               *)
+(* ------------------------------------------------------------------ *)
+
+belief_decl        = "belief" , IDENT , ":=" , inquire_expr , NEWLINE ;
+
+inquire_expr       = "inquire" , "{" , NEWLINE
+                   , { inquire_field , [ "," ] , NEWLINE }
+                   , "}" ;
+
+inquire_field      = "prompt" , ":" , STRING_LIT
+                   | "agents" , ":" , "[" , [ IDENT , { "," , IDENT } ] , "]"
+                   | "ttl" , ":" , number ;
+
+resolve_stmt       = "resolve" , IDENT , "with" , "consensus"
+                   , [ "{" , NEWLINE
+                     , { resolve_field , [ "," ] , NEWLINE }
+                     , "}" ] , NEWLINE ;
+
+resolve_field      = "threshold" , ":" , number
+                   | "strategy" , ":" , IDENT ;
+(* strategy is a label kept for language compatibility; the implemented
+   operation is BetaDist.combine_pseudocount: pseudocount addition
+   (alpha + alpha' - 1, beta + beta' - 1) with a K conflict check,
+   not formal Dempster-Shafer combination. *)
+
+guard_stmt         = "guard" , IDENT , "against" , "hallucination"
+                   , [ "{" , NEWLINE
+                     , { guard_field , [ "," ] , NEWLINE }
+                     , "}" ] , NEWLINE ;
+
+guard_field        = "max_risk" , ":" , number
+                   | "strategy" , ":" , IDENT
+                   | "max_variance" , ":" , number ;
+(* strategy is one of: mean | variance | both.
+   max_variance is optional; when absent the executor uses the legacy
+   0.05 default. The lowering pass warns when the effective limit is
+   unreachable for inquiry-produced beliefs. *)
+
+evolve_stmt        = "evolve" , IDENT , "until" , IDENT
+                   , [ "{" , NEWLINE
+                     , { evolve_field , [ "," ] , NEWLINE }
+                     , "}" ] , NEWLINE ;
+
+evolve_field       = "max_iter" , ":" , INT_LIT ;
+
+symbol_decl        = "symbol" , IDENT , "{" , NEWLINE
+                   , { statement }
+                   , "}" , NEWLINE ;
+
+(* ------------------------------------------------------------------ *)
+(* Statements                                                          *)
+(* ------------------------------------------------------------------ *)
+
+statement          = val_decl
+                   | return_stmt
+                   | assert_stmt
+                   | emit_stmt
+                   | for_stmt
+                   | detect_stmt
+                   | resolve_stmt
+                   | guard_stmt
+                   | evolve_stmt
+                   | expr_stmt ;
+
+return_stmt        = "return" , [ expr ] , NEWLINE ;
+assert_stmt        = "assert" , expr , NEWLINE ;
+emit_stmt          = "emit" , expr , NEWLINE ;
+for_stmt           = "for" , IDENT , "in" , expr , NEWLINE
+                   , { statement }
+                   , "end" , NEWLINE ;
+detect_stmt        = "detect" , expr , NEWLINE ;
+expr_stmt          = expr , NEWLINE ;
+
+(* ------------------------------------------------------------------ *)
+(* Expressions (precedence, lowest to highest)                         *)
+(* ------------------------------------------------------------------ *)
+
+expr               = or_expr ;
+or_expr            = and_expr , { "or" , and_expr } ;
+and_expr           = equality_expr , { "and" , equality_expr } ;
+equality_expr      = comparison_expr , { ( "==" | "!=" ) , comparison_expr } ;
+comparison_expr    = addition_expr , { ( "<" | "<=" | ">" | ">=" ) , addition_expr } ;
+addition_expr      = multiplication_expr , { ( "+" | "-" ) , multiplication_expr } ;
+multiplication_expr = unary_expr , { ( "*" | "/" | "%" ) , unary_expr } ;
+unary_expr         = [ ( "-" | "not" ) ] , call_expr ;
+call_expr          = primary_expr , { "(" , [ expr , { "," , expr } ] , ")"
+                                    | "." , IDENT
+                                    | "[" , expr , "]" } ;
+
+primary_expr       = INT_LIT
+                   | FLOAT_LIT
+                   | STRING_LIT
+                   | ( "true" | "false" )
+                   | IDENT
+                   | list_literal
+                   | "(" , expr , ")"
+                   | if_expr
+                   | match_expr ;
+
+list_literal       = "[" , [ expr , { "," , expr } ] , "]" ;
+
+if_expr            = "if" , expr , NEWLINE
+                   , { statement }
+                   , [ "else" , NEWLINE , { statement } ]
+                   , "end" ;
+
+match_expr         = "match" , expr , NEWLINE
+                   , { "|" , pattern , "=>" , { statement } , NEWLINE }
+                   , "end" ;
+
+pattern            = IDENT | STRING_LIT | INT_LIT | "_" ;
+
+(* ------------------------------------------------------------------ *)
+(* Imports                                                             *)
+(* ------------------------------------------------------------------ *)
+
+import_stmt        = "import" , STRING_LIT
+                   , [ "as" , IDENT ] , NEWLINE ;
+
+(* ------------------------------------------------------------------ *)
+(* ML surface (summarized): model / layer / train / constitution and   *)
+(* named config blocks share the generic key-value block machinery    *)
+(* (see Parser._parse_kv_block and _parse_named_config_block).         *)
+(* ------------------------------------------------------------------ *)
+
+ml_decl            = model_decl | train_stmt | constitution_decl
+                   | named_config_block ;
+
+model_decl         = "model" , IDENT , "{" , NEWLINE
+                   , { kv_field , NEWLINE | layer_decl }
+                   , "}" , NEWLINE ;
+
+layer_decl         = "layer" , IDENT , "{" , NEWLINE
+                   , { kv_field , NEWLINE }
+                   , "}" , NEWLINE ;
+
+train_stmt         = "train" , IDENT , "{" , NEWLINE
+                   , { kv_field , NEWLINE }
+                   , "}" , NEWLINE ;
+
+constitution_decl  = "constitution" , IDENT , "{" , NEWLINE
+                   , { kv_field , NEWLINE }
+                   , "}" , NEWLINE ;
+
+named_config_block = ( "causal_model" | "federated_train" | "meta_train"
+                     | "self_improve" | "swarm" | "replay_buffer"
+                     | "reward_system" | "predictive_coding" )
+                   , IDENT , "{" , NEWLINE
+                   , { kv_field , NEWLINE }
+                   , "}" , NEWLINE ;
+
+kv_field           = IDENT , ":" , kv_value , [ "," ] ;
+kv_value           = number | STRING_LIT | IDENT
+                   | "[" , [ kv_value , { "," , kv_value } ] , "]" ;
+
+(* ------------------------------------------------------------------ *)
+(* Lexical helpers                                                     *)
+(* ------------------------------------------------------------------ *)
+
+number             = INT_LIT | FLOAT_LIT ;
+NEWLINE            = (* end-of-line token; blank lines are skipped *) ;
+IDENT              = (* letter / underscore followed by alphanumerics *) ;
+INT_LIT            = (* decimal integer *) ;
+FLOAT_LIT          = (* decimal float *) ;
+STRING_LIT         = (* double-quoted string *) ;

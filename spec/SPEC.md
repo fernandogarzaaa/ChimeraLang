@@ -4,12 +4,13 @@
 
 ChimeraLang is a programming language designed exclusively for AI cognition. Unlike
 traditional languages built for human sequential reasoning, ChimeraLang encodes
-probabilistic reasoning, semantic constraints, quantum consensus, and memory scoping
+probabilistic reasoning, semantic constraints, ensemble consensus, and memory scoping
 as first-class language primitives.
 
 The language does not eliminate hallucination — it *harnesses* it. Every computation
 is a controlled exploration of possibility space, collapsed into committed output
-through quantum-inspired consensus gates.
+through ensemble consensus gates: N branches run with Gaussian-perturbed
+confidences and collapse by confidence-weighted vote.
 
 ---
 
@@ -21,7 +22,7 @@ through quantum-inspired consensus gates.
    enforces certainty boundaries at compile time.
 3. **Semantic Constraints** — Functions declare *what the output must mean*, not
    *how to compute it*. The runtime searches for satisfying outputs.
-4. **Quantum Consensus** — Multi-path reasoning with collapse. N branches explore,
+4. **Ensemble Consensus** — Multi-path reasoning with collapse. N branches explore,
    a consensus gate commits one answer.
 5. **Cognitive Transparency** — Every execution produces a reasoning trace as a
    first-class artifact, enabling hallucination fingerprinting and visual inspection.
@@ -85,7 +86,7 @@ fn summarize(doc: Text) -> Confident<Text>
 end
 ```
 
-### 3.3 Quantum Consensus Gates
+### 3.3 Ensemble Consensus Gates
 
 ```chimera
 gate decide(question: Text) -> Confident<Text>
@@ -129,9 +130,9 @@ assert no_hallucination(output, source_facts)
 
 ## 4. Execution Model
 
-### 4.1 Quantum Consensus Execution
+### 4.1 Ensemble Consensus Execution
 
-Every `gate` spawns N reasoning branches in superposition. Each branch independently
+Every `gate` spawns N reasoning branches with perturbed confidences. Each branch independently
 computes a result. The collapse function (majority, weighted_vote, highest_confidence)
 selects the committed output.
 
@@ -242,7 +243,7 @@ key_entities, divergent_paths, score_by, highest_consensus
 ```
 ┌─────────────────────────────────────────┐
 │        AI LAYER (ChimeraLang)           │
-│  probabilistic · quantum · semantic     │
+│  probabilistic · ensemble · semantic     │
 └──────────────────┬──────────────────────┘
                    │
           [ Chimera Compiler ]
