@@ -62,6 +62,81 @@ def _default_mock_adapter(prompt: str, agents: list[str]) -> InquiryResponse:
     return InquiryResponse(confidence=0.75, answer=f"<mock answer for {prompt!r}>")
 
 
+# Default agent name -> model id mapping for the Anthropic adapter.
+# Explicit and overridable; the adapter never silently falls back to
+# one model for an unknown agent.
+DEFAULT_AGENT_MODELS: dict[str, str] = {"claude": "claude-sonnet-4-6"}
+
+
+def _make_anthropic_adapter(client: Any, agent_models: dict[str, str] | None) -> InquiryAdapter:
+    """Build the default Anthropic inquiry adapter around an existing client.
+
+    ``agent_models`` maps agent names to model ids and is merged over
+    :data:`DEFAULT_AGENT_MODELS`. A call with an unknown or missing
+    agent name raises ``ValueError`` naming the problem; the adapter
+    never silently substitutes one model for another.
+    """
+    models = dict(DEFAULT_AGENT_MODELS)
+    if agent_models:
+        models.update(agent_models)
+
+    def _anthropic_adapter(prompt: str, agents: list[str]) -> InquiryResponse:
+        import json
+        import re
+        if not agents:
+            raise ValueError(
+                "default Anthropic adapter requires at least one agent name "
+                f"(known agents: {sorted(models)}); pass agents=['claude'] "
+                "or configure agent_models"
+            )
+        unknown = [a for a in agents if a not in models]
+        if unknown:
+            raise ValueError(
+                f"unknown agent(s) {unknown}; known agents: {sorted(models)}; "
+                "refusing to silently fall back to one model"
+            )
+        model = models[agents[0]]
+        msg = client.messages.create(
+            model=model,
+            max_tokens=256,
+            messages=[{
+                "role": "user",
+                "content": (
+                    f"{prompt}\n\nRespond with a single JSON object: "
+                    '{"answer": "<brief answer>", "confidence": <0.0-1.0>}'
+                ),
+            }],
+        )
+        text = msg.content[0].text
+
+        # Prefer a clean JSON parse; fall back to regex if the model
+        # wrapped the JSON in prose. Capture both fields regardless.
+        answer: str | None = None
+        confidence: float = 0.7
+        try:
+            obj_match = re.search(r"\{.*\}", text, re.DOTALL)
+            if obj_match:
+                parsed = json.loads(obj_match.group(0))
+                if isinstance(parsed, dict):
+                    if "confidence" in parsed:
+                        confidence = float(parsed["confidence"])
+                    if "answer" in parsed and parsed["answer"] is not None:
+                        answer = str(parsed["answer"])
+                    return InquiryResponse(confidence=confidence, answer=answer)
+        except (json.JSONDecodeError, ValueError, TypeError):
+            pass
+
+        conf_m = re.search(r'"confidence"\s*:\s*([0-9.]+)', text)
+        if conf_m:
+            confidence = float(conf_m.group(1))
+        ans_m = re.search(r'"answer"\s*:\s*"([^"]*)"', text)
+        if ans_m:
+            answer = ans_m.group(1)
+        return InquiryResponse(confidence=confidence, answer=answer)
+
+    return _anthropic_adapter
+
+
 def _normalize_response(raw: Any) -> InquiryResponse:
     """Coerce an adapter's return value into InquiryResponse.
 
@@ -92,7 +167,11 @@ class CIRExecutor:
         self,
         inquiry_adapter: InquiryAdapter | None = None,
         strict_guard: bool = False,
+        agent_models: dict[str, str] | None = None,
     ) -> None:
+        self._agent_models = dict(DEFAULT_AGENT_MODELS)
+        if agent_models:
+            self._agent_models.update(agent_models)
         self._adapter = inquiry_adapter or self._resolve_adapter()
         self._strict = strict_guard
 
@@ -375,53 +454,10 @@ class CIRExecutor:
     # Adapter resolution
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _resolve_adapter() -> InquiryAdapter:
+    def _resolve_adapter(self) -> InquiryAdapter:
         try:
             import anthropic  # type: ignore[import]
             client = anthropic.Anthropic()
-
-            def _anthropic_adapter(prompt: str, agents: list[str]) -> InquiryResponse:
-                import json
-                import re
-                msg = client.messages.create(
-                    model="claude-sonnet-4-6",
-                    max_tokens=256,
-                    messages=[{
-                        "role": "user",
-                        "content": (
-                            f"{prompt}\n\nRespond with a single JSON object: "
-                            '{"answer": "<brief answer>", "confidence": <0.0-1.0>}'
-                        ),
-                    }],
-                )
-                text = msg.content[0].text
-
-                # Prefer a clean JSON parse; fall back to regex if the model
-                # wrapped the JSON in prose. Capture both fields regardless.
-                answer: str | None = None
-                confidence: float = 0.7
-                try:
-                    obj_match = re.search(r"\{.*\}", text, re.DOTALL)
-                    if obj_match:
-                        parsed = json.loads(obj_match.group(0))
-                        if isinstance(parsed, dict):
-                            if "confidence" in parsed:
-                                confidence = float(parsed["confidence"])
-                            if "answer" in parsed and parsed["answer"] is not None:
-                                answer = str(parsed["answer"])
-                            return InquiryResponse(confidence=confidence, answer=answer)
-                except (json.JSONDecodeError, ValueError, TypeError):
-                    pass
-
-                conf_m = re.search(r'"confidence"\s*:\s*([0-9.]+)', text)
-                if conf_m:
-                    confidence = float(conf_m.group(1))
-                ans_m = re.search(r'"answer"\s*:\s*"([^"]*)"', text)
-                if ans_m:
-                    answer = ans_m.group(1)
-                return InquiryResponse(confidence=confidence, answer=answer)
-
-            return _anthropic_adapter
+            return _make_anthropic_adapter(client, self._agent_models)
         except (ImportError, Exception):
             return _default_mock_adapter

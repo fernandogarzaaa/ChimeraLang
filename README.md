@@ -154,7 +154,11 @@ Beliefs are **Beta distributions** `Beta(α, β)` — not scalar floats. This me
 
 ### Evidence combination (`resolve`)
 
-`resolve` pools beliefs by pseudocount addition — `alpha + alpha' - 1`, `beta + beta' - 1` — after a Dempster-style conflict check. When the conflict coefficient K exceeds the threshold, a conflict error is raised rather than silently merging. This is not formal Dempster-Shafer combination; the `dempster_shafer` strategy label is kept for language compatibility and `BetaDist.combine_ds` remains as a backward-compatible alias for `combine_pseudocount`. Pooled beliefs assume independent sources; repeated calls to the same model are correlated, so pooling them overstates the evidence.
+`resolve` pools beliefs by pseudocount addition — `alpha + alpha' - 1`, `beta + beta' - 1` — after a Dempster-style conflict check. When the conflict coefficient K exceeds the threshold, a conflict error is raised rather than silently merging. This is not formal Dempster-Shafer combination; the `dempster_shafer` strategy label is kept for language compatibility and `BetaDist.combine_ds` remains as a backward-compatible alias for `combine_pseudocount`.
+
+**Multi-agent fan-out.** A belief with `agents: [a, b]` lowers to one `InquiryNode` per agent, so `resolve` now causes N adapter calls (one per agent) instead of one. Each agent's belief is tracked separately as `x@a`, `x@b` and pooled by the chain above. Different agents are *less correlated*, not independent: models share training data, so pooling still overstates the evidence somewhat, just less than repeated calls to one model. The default Anthropic adapter maps agent names to model ids through an explicit dict (`CIRExecutor(agent_models={...})`, default `{"claude": "claude-sonnet-4-6"}`) and raises a clear error naming any unknown agent rather than silently falling back to one model.
+
+Without `resolve`, there is no pooled belief: `guard`, `evolve`, and `emit` apply to the *first* agent's belief only, and lowering warns loudly telling you to add `resolve`. Listing the same agent twice warns that the sources are the same model and the evidence is correlated.
 
 ### Guard (`guard`)
 

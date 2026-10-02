@@ -32,6 +32,7 @@ def run_cir(
     load_symbols: str | None = None,
     inquiry_adapter=None,
     strict_guard: bool = False,
+    agent_models: dict[str, str] | None = None,
 ) -> CIRResult:
     """Full CIR pipeline.
 
@@ -52,7 +53,9 @@ def run_cir(
     lowering = CIRLowering(symbol_store=store)
     graph = lowering.lower(program)
 
-    executor = CIRExecutor(inquiry_adapter=inquiry_adapter, strict_guard=strict_guard)
+    executor = CIRExecutor(inquiry_adapter=inquiry_adapter,
+                           strict_guard=strict_guard,
+                           agent_models=agent_models)
     result = executor.run(graph)
 
     prompts = [
