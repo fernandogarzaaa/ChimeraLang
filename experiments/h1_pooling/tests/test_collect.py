@@ -69,3 +69,24 @@ def test_question_index_matches_dataset_order(tmp_path):
     for row in rows:
         seen.setdefault(row["id"], row["question_index"])
     assert [seen[qid] for qid in ids] == list(range(len(ids)))
+
+
+def test_nebius_unknown_agent_refuses(tmp_path):
+    out = str(tmp_path / "r.jsonl")
+    cmd = [sys.executable, os.path.join(EXP, "collect.py"),
+           "--dataset", DATASET, "--out", out, "--backend", "nebius",
+           "--mode", "A", "--models", "not-a-model"]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    assert r.returncode != 0
+    assert "unknown agent" in r.stderr
+
+
+def test_workers_parity(tmp_path):
+    o1 = str(tmp_path / "w1.jsonl")
+    o4 = str(tmp_path / "w4.jsonl")
+    run_collect(o1, "--mode", "B", "--models", "claude", "--k", "3",
+                "--seed", "11", "--workers", "1")
+    run_collect(o4, "--mode", "B", "--models", "claude", "--k", "3",
+                "--seed", "11", "--workers", "4")
+    key = lambda r: (r["id"], r["model"], r["sample_index"])
+    assert sorted(read_rows(o1), key=key) == sorted(read_rows(o4), key=key)

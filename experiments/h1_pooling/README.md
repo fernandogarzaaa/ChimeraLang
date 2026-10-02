@@ -36,15 +36,28 @@ Run the unit tests with `python -m pytest tests/ -q`.
 
 ## Real run (paid; requires explicit approval)
 
-Do NOT run the anthropic backend without Inan's explicit approval and
-his dataset path. Then:
+Do NOT run a paid backend without Inan's explicit approval. Approved
+2026-10-02: Nebius Token Factory (open models; stored credential, no
+raw keys). Then:
 
 ```
-export ANTHROPIC_API_KEY   # from the environment only, never committed
-python collect.py --dataset <path> --out responses.jsonl \
-  --backend anthropic --mode B --models claude --k 5
-python analyze.py --responses responses.jsonl
+python collect.py --dataset datasets/simpleqa_500.jsonl \
+  --out runs/<date>/responses_b.jsonl --backend nebius \
+  --mode B --models qwen3-235b --k 5 --workers 8
+python collect.py --dataset datasets/simpleqa_500.jsonl \
+  --out runs/<date>/responses_a.jsonl --backend nebius \
+  --mode A --models qwen3-235b,deepseek-v32,kimi-k2.5 --workers 8
+cat runs/<date>/responses_b.jsonl runs/<date>/responses_a.jsonl \
+  > runs/<date>/responses.jsonl
+python analyze.py --responses runs/<date>/responses.jsonl \
+  --out-json runs/<date>/summary.json
 ```
+
+Mode B agent `qwen3-235b` maps to Qwen/Qwen3-235B-A22B-Instruct-2507;
+mode A adds deepseek-ai/DeepSeek-V3.2-Exp and moonshotai/Kimi-K2.5
+(three distinct model families). The prereg names no provider, so this
+is not a deviation; model ids are recorded in every row and the run
+manifest.
 
 Every raw response is stored with its SHA-256; each row also carries
 its gold answers, its position in the dataset, and the dataset
