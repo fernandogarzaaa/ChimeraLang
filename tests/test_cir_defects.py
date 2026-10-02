@@ -134,6 +134,17 @@ class TestVarianceGuard:
         lowering.lower(prog)
         assert any("unreachable" in w for w in lowering.warnings)
 
+    def test_reachable_variance_limit_produces_no_unreachable_warning(self):
+        prog = make_program(
+            _belief(name="v"),
+            GuardStmt(target="v", max_risk=0.2, strategy="variance",
+                      max_variance=0.01),
+            EmitStmt(value=Identifier(name="v")),
+        )
+        lowering = CIRLowering()
+        lowering.lower(prog)
+        assert not any("unreachable" in w for w in lowering.warnings)
+
 
 # ---------------------------------------------------------------------------
 # Defect 3: honest resolve trace

@@ -216,7 +216,12 @@ class CIRExecutor:
                 bs.provenance.append(f"consensus({node.strategy},mean={combined.mean:.3f})")
 
     def _exec_validation(self, node: ValidationNode, graph: CIRGraph, result: CIRResult) -> None:
-        result.trace.append(f"[guard] max_risk={node.max_risk} strategy={node.strategy}")
+        limit = (f"max_variance={node.max_variance}"
+                 if node.max_variance is not None else "")
+        result.trace.append(
+            f"[guard] max_risk={node.max_risk} strategy={node.strategy}"
+            + (f" {limit}" if limit else "")
+        )
         bs = next(
             (b for b in graph.belief_store.values() if b.node_id == node.target_id),
             None,
@@ -234,7 +239,12 @@ class CIRExecutor:
                 violations.append(f"mean {dist.mean:.3f} < required {required_mean:.3f}")
 
         if node.strategy in ("variance", "both"):
-            max_variance = 0.05
+            # Explicit per-guard limit when set; otherwise the legacy 0.05
+            # default. Note the default can never fire on beliefs produced
+            # by BetaDist.from_confidence (strength 10 caps variance at
+            # about 0.0227); the lowering pass warns about this.
+            max_variance = (node.max_variance if node.max_variance is not None
+                            else 0.05)
             if dist.variance > max_variance:
                 violations.append(f"variance {dist.variance:.4f} > allowed {max_variance}")
 

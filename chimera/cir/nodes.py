@@ -71,6 +71,18 @@ class BetaDist:
         new_beta = self.beta + other.beta - 1.0
         return BetaDist(alpha=max(new_alpha, 1e-6), beta=max(new_beta, 1e-6))
 
+    @staticmethod
+    def max_variance_for_strength(strength: float = 10.0) -> float:
+        """Largest variance any Beta with total pseudocount ``strength`` can have.
+
+        For Beta(alpha, beta) with alpha + beta = s, the variance
+        alpha*beta / (s^2 * (s+1)) is maximized at alpha = beta = s/2,
+        giving 1 / (4 * (s+1)). Inquiry-produced beliefs use
+        ``from_confidence`` with the default strength of 10, so their
+        variance can never exceed 1/44 = 0.0227.
+        """
+        return 1.0 / (4.0 * (strength + 1.0))
+
     def kl_divergence(self, other: BetaDist) -> float:
         """KL(self || other) via normal approximation."""
         if abs(self.alpha - other.alpha) < 1e-9 and abs(self.beta - other.beta) < 1e-9:
@@ -145,6 +157,8 @@ class ValidationNode(CIRNode):
     max_risk: float = 0.2
     strategy: str = "both"
     target_id: str = ""
+    # Optional explicit variance limit; None keeps the legacy 0.05 default.
+    max_variance: float | None = None
 
 
 @dataclass
