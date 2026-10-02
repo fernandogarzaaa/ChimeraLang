@@ -53,51 +53,76 @@ class CIRLowering:
             BeliefDecl, EmitStmt, EvolveStmt, GuardStmt, ResolveStmt,
         )
 
-        belief_node_map: dict[str, str] = {}
+        # Belief name -> ids of the nodes currently standing for it.
+        # A multi-agent belief fans out to one id per agent; resolve
+        # collapses the list back to a single consensus id.
+        belief_node_map: dict[str, list[str]] = {}
 
         for decl in program.declarations:  # type: ignore[attr-defined]
             if isinstance(decl, BeliefDecl):
-                inq = InquiryNode(
-                    prompt=decl.inquire_expr.prompt if decl.inquire_expr else "",
-                    agents=list(decl.inquire_expr.agents) if decl.inquire_expr else [],
-                    ttl=decl.inquire_expr.ttl if decl.inquire_expr else None,
-                )
-                graph.add_node(inq)
-                belief_node_map[decl.name] = inq.id
+                agents = (list(decl.inquire_expr.agents)
+                          if decl.inquire_expr and decl.inquire_expr.agents else [])
+                prompt = decl.inquire_expr.prompt if decl.inquire_expr else ""
+                ttl = decl.inquire_expr.ttl if decl.inquire_expr else None
+                # One InquiryNode per agent (fan-out A). Zero or one agent
+                # keeps the historical single-node shape and belief name.
+                per_agent = agents if len(agents) > 1 else [agents[0] if agents else ""]
+                node_ids: list[str] = []
+                seen_names: set[str] = set()
+                for i, agent in enumerate(per_agent):
+                    inq = InquiryNode(
+                        prompt=prompt,
+                        agents=[agent] if agent else [],
+                        ttl=ttl,
+                    )
+                    graph.add_node(inq)
+                    node_ids.append(inq.id)
 
-                prior = BetaDist.uniform()
-                if self._symbol_store is not None and inq.prompt:
-                    seeded = self._symbol_store.find_prior_for(inq.prompt)
-                    if seeded is not None:
-                        prior = seeded
-                        self.priors_seeded.append(decl.name)
+                    if len(per_agent) == 1:
+                        belief_name = decl.name
+                    else:
+                        belief_name = f"{decl.name}@{agent}"
+                        n = 2
+                        while belief_name in seen_names:
+                            belief_name = f"{decl.name}@{agent}#{n}"
+                            n += 1
+                    seen_names.add(belief_name)
 
-                graph.belief_store[decl.name] = BeliefState(
-                    name=decl.name,
-                    distribution=prior,
-                    ttl=inq.ttl,
-                    node_id=inq.id,
-                )
-                if not graph.entry_id:
-                    graph.entry_id = inq.id
+                    prior = BetaDist.uniform()
+                    if self._symbol_store is not None and inq.prompt:
+                        seeded = self._symbol_store.find_prior_for(inq.prompt)
+                        if seeded is not None:
+                            prior = seeded
+                            self.priors_seeded.append(belief_name)
+
+                    graph.belief_store[belief_name] = BeliefState(
+                        name=belief_name,
+                        distribution=prior,
+                        ttl=inq.ttl,
+                        node_id=inq.id,
+                    )
+                    if not graph.entry_id:
+                        graph.entry_id = inq.id
+                belief_node_map[decl.name] = node_ids
 
             elif isinstance(decl, ResolveStmt):
-                source_id = belief_node_map.get(decl.target, "")
+                source_ids = belief_node_map.get(decl.target, [])
                 cons = ConsensusNode(
                     threshold=decl.threshold,
                     strategy=decl.strategy,
-                    input_ids=[source_id] if source_id else [],
+                    input_ids=list(source_ids),
                 )
                 graph.add_node(cons)
-                if source_id:
+                for source_id in source_ids:
                     graph.add_edge(CIREdge(
                         source_id=source_id, target_id=cons.id,
                         kind=EdgeKind.CONSENSUS,
                     ))
-                belief_node_map[decl.target] = cons.id
+                belief_node_map[decl.target] = [cons.id]
 
             elif isinstance(decl, GuardStmt):
-                source_id = belief_node_map.get(decl.target, "")
+                source_ids = belief_node_map.get(decl.target, [])
+                source_id = source_ids[0] if source_ids else ""
                 val = ValidationNode(
                     max_risk=decl.max_risk,
                     strategy=decl.strategy,
@@ -110,10 +135,11 @@ class CIRLowering:
                         source_id=source_id, target_id=val.id,
                         kind=EdgeKind.VALIDATION,
                     ))
-                belief_node_map[decl.target] = val.id
+                belief_node_map[decl.target] = [val.id]
 
             elif isinstance(decl, EvolveStmt):
-                source_id = belief_node_map.get(decl.target, "")
+                source_ids = belief_node_map.get(decl.target, [])
+                source_id = source_ids[0] if source_ids else ""
                 evo = EvolutionNode(
                     condition=decl.condition,
                     max_iter=decl.max_iter,
@@ -125,14 +151,14 @@ class CIRLowering:
                         source_id=source_id, target_id=evo.id,
                         kind=EdgeKind.EVOLUTION,
                     ))
-                belief_node_map[decl.target] = evo.id
+                belief_node_map[decl.target] = [evo.id]
 
             elif isinstance(decl, EmitStmt):
                 from chimera.ast_nodes import Identifier
                 if isinstance(decl.value, Identifier):
-                    node_id = belief_node_map.get(decl.value.name, "")
-                    if node_id:
-                        graph.emit_ids.append(node_id)
+                    node_ids = belief_node_map.get(decl.value.name, [])
+                    if node_ids:
+                        graph.emit_ids.append(node_ids[0])
 
     # ------------------------------------------------------------------
     # Pass 2: Dead belief elimination
