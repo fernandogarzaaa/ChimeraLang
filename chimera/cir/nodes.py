@@ -47,11 +47,18 @@ class BetaDist:
     def uniform(cls) -> BetaDist:
         return cls(alpha=1.0, beta=1.0)
 
-    def combine_ds(self, other: BetaDist, conflict_threshold: float = 0.8) -> BetaDist:
-        """Dempster-Shafer-inspired evidence combination.
+    def combine_pseudocount(
+        self, other: BetaDist, conflict_threshold: float = 0.8
+    ) -> BetaDist:
+        """Pseudocount addition with a K conflict check.
 
-        Detects conflict (when one source is very high and the other very low)
-        and raises ValueError rather than silently producing garbage.
+        This is NOT Dempster-Shafer combination in the formal sense. It
+        adds the two distributions' pseudocounts
+        (alpha + alpha' - 1, beta + beta' - 1) after a Dempster-style
+        conflict check. The conflict coefficient
+        K = m1_yes*m2_no + m1_no*m2_yes measures how irreconcilable the
+        sources are; when K exceeds ``conflict_threshold`` a ValueError
+        is raised rather than silently producing a merged belief.
         """
         total1 = self.alpha + self.beta
         total2 = other.alpha + other.beta
@@ -63,13 +70,24 @@ class BetaDist:
         K = m1_yes * m2_no + m1_no * m2_yes
         if K > conflict_threshold:
             raise ValueError(
-                f"DS conflict K={K:.3f} exceeds threshold {conflict_threshold:.2f}. "
+                f"evidence conflict K={K:.3f} exceeds threshold {conflict_threshold:.2f}. "
                 f"Sources irreconcilable: mean1={self.mean:.3f}, mean2={other.mean:.3f}"
             )
 
         new_alpha = self.alpha + other.alpha - 1.0
         new_beta = self.beta + other.beta - 1.0
         return BetaDist(alpha=max(new_alpha, 1e-6), beta=max(new_beta, 1e-6))
+
+    def combine_ds(
+        self, other: BetaDist, conflict_threshold: float = 0.8
+    ) -> BetaDist:
+        """Backward-compatible alias for :meth:`combine_pseudocount`.
+
+        Kept so existing callers and tests keep working. The name
+        reflects the original Dempster-Shafer-inspired labeling; the
+        actual operation is pseudocount addition with a K conflict check.
+        """
+        return self.combine_pseudocount(other, conflict_threshold=conflict_threshold)
 
     @staticmethod
     def max_variance_for_strength(strength: float = 10.0) -> float:
@@ -148,6 +166,9 @@ class InquiryNode(CIRNode):
 @dataclass
 class ConsensusNode(CIRNode):
     threshold: float = 0.8
+    # Strategy label kept for language compatibility; the implemented
+    # operation is BetaDist.combine_pseudocount (pseudocount addition with
+    # a K conflict check), not formal Dempster-Shafer combination.
     strategy: str = "dempster_shafer"
     input_ids: list[str] = field(default_factory=list)
 

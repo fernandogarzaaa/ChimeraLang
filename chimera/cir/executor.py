@@ -2,8 +2,8 @@
 
 Runs a CIRGraph in topological order:
   - InquiryNode  → calls inquiry_adapter (Claude or mock)
-  - ConsensusNode → Dempster-Shafer combination + BFT validation
-  - ValidationNode → guard: mean >= (1-max_risk) and/or variance <= 0.05
+  - ConsensusNode → pseudocount addition with K conflict check + threshold check
+  - ValidationNode → guard: mean >= (1-max_risk) and/or variance <= limit
   - EvolutionNode → fixed-point loop minimizing KL divergence
   - Temporal decay → stale beliefs regressed toward uniform prior
 """
@@ -191,23 +191,27 @@ class CIRExecutor:
             result.trace.append("[consensus] no input beliefs — skipping")
             return
 
-        combined = input_beliefs[0][1]
-        for _, other_dist in input_beliefs[1:]:
-            try:
-                combined = combined.combine_ds(other_dist)
-            except ValueError as e:
-                result.trace.append(f"[consensus] DS conflict: {e}")
-                result.guard_violations.append(f"consensus conflict: {e}")
-                return
+        if len(input_beliefs) == 1:
+            # A single input is not a combination; say so in the trace.
+            result.trace.append("[consensus] single source, no combination performed")
+            combined = input_beliefs[0][1]
+        else:
+            combined = input_beliefs[0][1]
+            for _, other_dist in input_beliefs[1:]:
+                try:
+                    combined = combined.combine_pseudocount(other_dist)
+                except ValueError as e:
+                    result.trace.append(f"[consensus] combination conflict: {e}")
+                    result.guard_violations.append(f"consensus conflict: {e}")
+                    return
+            result.trace.append(
+                f"[consensus] combined mean={combined.mean:.3f} variance={combined.variance:.4f}"
+            )
 
         if combined.mean < node.threshold:
             msg = f"consensus mean {combined.mean:.3f} below threshold {node.threshold}"
             result.trace.append(f"[consensus] BELOW THRESHOLD — {msg}")
             result.guard_violations.append(msg)
-
-        result.trace.append(
-            f"[consensus] combined mean={combined.mean:.3f} variance={combined.variance:.4f}"
-        )
 
         for bs in graph.belief_store.values():
             if bs.node_id in node.input_ids:
