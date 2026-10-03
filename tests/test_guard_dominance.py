@@ -571,3 +571,25 @@ def test_not_rederived_non_enforced_still_checked():
     assert vr.link_status == "NOT RE-DERIVED"
     assert any("NOT RE-DERIVED" in f for f in vr.failures)
     assert not vr.valid
+
+
+def test_two_lowerings_produce_identical_graphs():
+    """Red test: CIRLowering must assign deterministic node ids
+    (creation order), so two lowerings of the same source serialize
+    byte-for-byte identically. Required for exact graph comparison
+    in the verifier."""
+    from chimera.cir.certify import _canonical_bytes, serialize_graph
+
+    sources = [
+        open("examples/guarded_pipeline.chimera", encoding="utf-8").read(),
+        CANONICAL,
+        FANOUT_RESOLVE_NO_GUARD,
+        DOUBLE_GUARD,
+    ]
+    for src in sources:
+        g1 = CIRLowering().lower(parse_src(src))
+        g2 = CIRLowering().lower(parse_src(src))
+        b1 = _canonical_bytes(serialize_graph(g1))
+        b2 = _canonical_bytes(serialize_graph(g2))
+        assert b1 == b2, (
+            "two lowerings of the same source must be byte-identical")
