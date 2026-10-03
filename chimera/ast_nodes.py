@@ -321,6 +321,11 @@ class GuardStmt(Statement):
     # Optional explicit variance limit. When None, the executor falls back
     # to the legacy 0.05 default for backward compatibility.
     max_variance: float | None = None
+    # Source-level strict modifier (Option 2). When True, a failing guard
+    # raises GuardViolation and halts the run, exactly like the global
+    # strict_guard run flag. Unlike the flag, this is part of the program
+    # source and therefore feeds the certificate dominance claim.
+    strict: bool = False
 
 
 @dataclass

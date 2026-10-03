@@ -8,6 +8,20 @@ builds on is mapped in
 `docs/design/guard-dominance-current-state.md`. All six product
 decisions are marked CHOSEN below.
 
+**Update 2026-10-03 (Option 2 implemented):** the source-level strict
+guard modifier is now implemented on branch `feat/strict-guard-source`.
+`guard x against hallucination { ..., strict: true }` is parsed into
+`GuardStmt.strict`, lowered to `ValidationNode.strict`, and honored by
+the executor (a failing strict guard raises `GuardViolation` even when
+the global `--strict-guard` flag is off). The dominance claim is now
+`enforced` only when every guard on every dominating path to each
+effectful node is source-level strict; the global `strict_guard` run
+flag is recorded in the certificate for information only and does not
+affect the claim. The verifier derives the claim from the re-lowered
+graph alone and ignores `cir.strict_guard`. See
+`examples/strict_guarded_pipeline.chimera`, which verifies as
+`enforced` via `chimera verify`.
+
 ## 0. The check in one paragraph
 
 Every effectful CIR node must be guard-dominated along belief-flow

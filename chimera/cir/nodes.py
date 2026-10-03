@@ -200,6 +200,45 @@ class ValidationNode(CIRNode):
     target_id: str = ""
     # Optional explicit variance limit; None keeps the legacy 0.05 default.
     max_variance: float | None = None
+    # Source-level strict modifier, lowered from GuardStmt.strict. When
+    # True the executor raises GuardViolation on failure. This flag (not
+    # the global strict_guard run flag) determines the certificate's
+    # dominance claim.
+    strict: bool = False
+
+
+def is_vacuous_guard(strategy: str, max_risk: float,
+                     max_variance: float | None) -> bool:
+    """Whether a guard's checks can never fail.
+
+    Derivation:
+    - Mean check (strategy "mean" or "both"): violation if
+      score < 1.0 - max_risk. Scores are Beta means in (0, 1]. If
+      max_risk >= 1.0, the threshold 1.0 - max_risk <= 0, which no
+      score can fall below. The check cannot fail.
+    - Variance check (strategy "variance" or "both"): violation if
+      variance > max_variance. Inquiry-produced beliefs are Beta
+      distributions from BetaDist.from_confidence with strength 10;
+      by BetaDist.max_variance_for_strength their variance cannot
+      exceed 1/(4*11) ≈ 0.0227. If an explicit max_variance is at or
+      above this cap, the check cannot fire. (The legacy default of
+      0.05 is also above the cap; it gets its own "unreachable"
+      warning in the lowering pass and is not flagged as vacuous
+      here, to preserve backward compatibility.)
+    - A guard is vacuous iff every check its strategy activates is
+      vacuous. A "both" guard with only one vacuous check can still
+      fail via the other.
+    """
+    cap = BetaDist.max_variance_for_strength(10.0)
+    mean_vacuous = max_risk >= 1.0
+    variance_vacuous = (max_variance is not None and max_variance >= cap)
+    if strategy == "mean":
+        return mean_vacuous
+    if strategy == "variance":
+        return variance_vacuous
+    if strategy == "both":
+        return mean_vacuous and variance_vacuous
+    return False
 
 
 @dataclass
