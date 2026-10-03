@@ -13,6 +13,10 @@ from chimera.cir.nodes import (
     InquiryNode, MetaNode, ValidationNode,
 )
 from chimera.cir.symbols import SymbolStore, Symbol, extract_subgraphs
+from chimera.cir.agreement import (
+    AgreementResult, normalize_answer, resolve_agreement,
+)
+from chimera.cir.calibration import LogisticCalibrator, MIN_FIT_N
 
 __all__ = [
     "CIRExecutor", "CIRResult", "GuardViolation", "InquiryResponse",
@@ -21,6 +25,8 @@ __all__ = [
     "ConsensusNode", "EdgeKind", "EvolutionNode",
     "InquiryNode", "MetaNode", "ValidationNode",
     "SymbolStore", "Symbol", "extract_subgraphs",
+    "AgreementResult", "normalize_answer", "resolve_agreement",
+    "LogisticCalibrator", "MIN_FIT_N",
     "run_cir",
 ]
 
@@ -33,6 +39,9 @@ def run_cir(
     inquiry_adapter=None,
     strict_guard: bool = False,
     agent_models: dict[str, str] | None = None,
+    calibrator: "LogisticCalibrator | None" = None,
+    agreement_comparator=None,
+    answer_normalizer=None,
 ) -> CIRResult:
     """Full CIR pipeline.
 
@@ -45,6 +54,14 @@ def run_cir(
        Only the likelihood is fed, never the posterior, so a seeded prior
        is not double-counted.
     5. Register the graph as a (new or recurring) symbol and persist.
+
+    ``calibrator`` is an optional
+    :class:`chimera.cir.calibration.LogisticCalibrator`. When supplied,
+    resolved beliefs carry ``calibrated_p`` (used by guard and emit);
+    when omitted, guard and emit fall back to the uncalibrated
+    posterior and a lowering warning says so. ``agreement_comparator``
+    and ``answer_normalizer`` plug into the agreement resolve strategy
+    (see :mod:`chimera.cir.agreement`).
     """
     store = SymbolStore()
     if load_symbols:
@@ -53,9 +70,24 @@ def run_cir(
     lowering = CIRLowering(symbol_store=store)
     graph = lowering.lower(program)
 
+    if calibrator is None and any(
+        isinstance(n, ConsensusNode) and len(n.input_ids) > 1
+        for n in graph.nodes.values()
+    ):
+        lowering.warnings.append(
+            "consensus resolved without a calibrator: posteriors are "
+            "uncalibrated (agreement vote shares and Beta means are not "
+            "probabilities). Pass calibrator=... to run_cir (or "
+            "--calibrator=PATH on the CLI), fit on a held-out calibration "
+            "set, to get calibrated_p on resolved beliefs."
+        )
+
     executor = CIRExecutor(inquiry_adapter=inquiry_adapter,
                            strict_guard=strict_guard,
-                           agent_models=agent_models)
+                           agent_models=agent_models,
+                           calibrator=calibrator,
+                           agreement_comparator=agreement_comparator,
+                           answer_normalizer=answer_normalizer)
     result = executor.run(graph)
 
     prompts = [

@@ -183,10 +183,13 @@ class InquiryNode(CIRNode):
 @dataclass
 class ConsensusNode(CIRNode):
     threshold: float = 0.8
-    # Strategy label kept for language compatibility; the implemented
-    # operation is BetaDist.combine_pseudocount (pseudocount addition with
-    # a K conflict check), not formal Dempster-Shafer combination.
-    strategy: str = "dempster_shafer"
+    # Resolve strategy: "agreement" (vote-share over normalized answers;
+    # the default when a belief has more than one source with answers),
+    # "pooled" (BetaDist.combine_pseudocount chain: pseudocount addition
+    # with a K conflict check), or "dempster_shafer" (accepted as an
+    # alias of "pooled" with a lowering warning; not formal
+    # Dempster-Shafer combination).
+    strategy: str = "agreement"
     input_ids: list[str] = field(default_factory=list)
 
 
@@ -229,6 +232,12 @@ class BeliefState:
     # combination. run_cir feeds only this (never the posterior) back to
     # the SymbolStore so the prior is not double-counted.
     observed: BetaDist | None = None
+    # Agreement resolve outputs. `agreement` is the raw vote share
+    # (votes for the winner / N); both are set only by the agreement
+    # strategy, and `calibrated_p` only when run_cir was given a
+    # calibrator (see chimera/cir/calibration.py).
+    agreement: float | None = None
+    calibrated_p: float | None = None
 
     def is_stale(self) -> bool:
         if self.ttl is None:
@@ -251,6 +260,8 @@ class BeliefState:
             node_id=self.node_id,
             answer=self.answer,
             observed=self.observed,
+            agreement=self.agreement,
+            calibrated_p=self.calibrated_p,
         )
 
 

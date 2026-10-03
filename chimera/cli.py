@@ -144,11 +144,32 @@ def cmd_run(path: str, *, show_trace: bool = False, extra_args: list[str] | None
         load_sym = next(
             (a.split("=", 1)[1] for a in args if a.startswith("--load-symbols=")), None
         )
-        cir_result = run_cir(program, save_symbols=save_sym, load_symbols=load_sym)
+        calibrator_path = next(
+            (a.split("=", 1)[1] for a in args if a.startswith("--calibrator=")), None
+        )
+        calibrator = None
+        if calibrator_path is not None:
+            from chimera.cir.calibration import LogisticCalibrator
+            try:
+                with open(calibrator_path, encoding="utf-8") as f:
+                    calibrator = LogisticCalibrator.from_json(f.read())
+            except (OSError, ValueError) as e:
+                print(f"chimera: cannot load calibrator {calibrator_path}: {e}",
+                      file=sys.stderr)
+                sys.exit(1)
+            print(f"chimera: using calibrator {calibrator_path} "
+                  f"(n={calibrator.n}, fit {calibrator.fit_date})")
+        cir_result = run_cir(program, save_symbols=save_sym, load_symbols=load_sym,
+                             calibrator=calibrator)
 
         if cir_result.emitted:
             for name, dist in cir_result.emitted:
-                print(f"  emit: {name}  [mean={dist.mean:.3f} variance={dist.variance:.4f}]")
+                cal = cir_result.calibrated.get(name)
+                if cal is not None:
+                    print(f"  emit: {name}  [calibrated_p={cal:.3f} "
+                          f"mean={dist.mean:.3f} variance={dist.variance:.4f}]")
+                else:
+                    print(f"  emit: {name}  [mean={dist.mean:.3f} variance={dist.variance:.4f}]")
 
         if show_trace and cir_result.trace:
             print("\n— CIR Reasoning Trace —")
@@ -515,6 +536,9 @@ ChimeraLang v0.2.0 — A programming language for AI cognition
 Usage:
   chimera run     <file.chimera> [--no-capability-check]
                                                    Execute a program (static + capability checked)
+  chimera run     <file.chimera> [--calibrator=cal.json]
+                                                   Execute with a fitted calibrator (see
+                                                   chimera/cir/calibration.py)
   chimera check   <file.chimera>                   Type-check + capability check only
   chimera lex     <file.chimera>                   Dump token stream
   chimera parse   <file.chimera>                   Dump AST

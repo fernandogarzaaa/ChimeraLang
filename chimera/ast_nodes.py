@@ -310,7 +310,7 @@ class BeliefDecl(Statement):
 class ResolveStmt(Statement):
     target: str = ""
     threshold: float = 0.8
-    strategy: str = "dempster_shafer"
+    strategy: str = "agreement"
 
 
 @dataclass

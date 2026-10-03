@@ -130,9 +130,20 @@ class CIRLowering:
 
             elif isinstance(decl, ResolveStmt):
                 source_ids = belief_node_map.get(decl.target, [])
+                strategy = decl.strategy
+                if strategy == "dempster_shafer":
+                    # Accepted as an alias of "pooled" for compatibility;
+                    # it was never formal Dempster-Shafer combination.
+                    self.warnings.append(
+                        f"resolve strategy 'dempster_shafer' on '{decl.target}' "
+                        "is accepted as an alias of 'pooled' (pseudocount "
+                        "addition with a K conflict check), not formal "
+                        "Dempster-Shafer combination"
+                    )
+                    strategy = "pooled"
                 cons = ConsensusNode(
                     threshold=decl.threshold,
-                    strategy=decl.strategy,
+                    strategy=strategy,
                     input_ids=list(source_ids),
                 )
                 graph.add_node(cons)
