@@ -480,7 +480,7 @@ def cmd_repl() -> None:
     """Interactive Read-Eval-Print Loop for ChimeraLang."""
     import readline  # noqa: F401 — enables history & arrow keys on most platforms
 
-    print("ChimeraLang REPL v0.2.0  (type ':exit' or Ctrl-D to quit, ':help' for help)")
+    print("ChimeraLang REPL v0.3.0  (type ':exit' or Ctrl-D to quit, ':help' for help)")
     print()
 
     vm = ChimeraVM()
@@ -571,7 +571,7 @@ def _print_node(node: object, indent: int = 0) -> None:
 # ---------------------------------------------------------------------------
 
 USAGE = """\
-ChimeraLang v0.2.0 — A programming language for AI cognition
+ChimeraLang v0.3.0 — A programming language for AI cognition
 
 Usage:
   chimera run     <file.chimera> [--no-capability-check]
