@@ -374,3 +374,55 @@ def test_verifier_still_accepts_v1():
     assert cert["format"] == "chimeralang-cert/v1"
     result = CertificateVerifier.verify(cert)
     assert result.valid, result.failures
+
+
+def test_verifier_rejects_forged_graph_source_mismatch():
+    """Forgery (trust-gap red test).
+
+    Take certify_cir output for an UNGUARDED program, splice in the
+    dominated graph from examples/guarded_pipeline.chimera, and fix up
+    graph_hash, dominance, and certificate_hash so every
+    internal-consistency check passes. The verifier must still reject
+    it, by re-deriving the graph from cir.program_source.
+    """
+    import hashlib
+    from chimera.cir import run_cir
+    from chimera.cir.certify import (
+        _canonical_bytes,
+        certify_cir,
+        check_dominance,
+        serialize_graph,
+    )
+    from chimera.verify import CertificateVerifier
+
+    # Honest cert for an UNGUARDED program (dominance: absent).
+    prog = parse_src(EMIT_NO_GUARD)
+    graph = CIRLowering().lower(prog)
+    result = run_cir(prog)
+    cert = certify_cir(EMIT_NO_GUARD, graph, result,
+                       strict_guard=False, calibrator=None)
+    assert cert["cir"]["dominance"]["claim"] == "absent"
+
+    # Forge: splice in the dominated graph from guarded_pipeline.
+    guarded_src = open("examples/guarded_pipeline.chimera",
+                       encoding="utf-8").read()
+    guarded_graph = CIRLowering().lower(parse_src(guarded_src))
+    forged_graph = serialize_graph(guarded_graph)
+    cert["cir"]["graph"] = forged_graph
+    cert["cir"]["graph_hash"] = hashlib.sha256(
+        _canonical_bytes(forged_graph)).hexdigest()[:32]
+    dom = check_dominance(forged_graph)
+    assert dom["dominated"]
+    cert["cir"]["dominance"] = {
+        "claim": "non-blocking",
+        "evidence": dom["evidence"],
+    }
+    # Fix up the outer binding so internal-consistency checks pass.
+    cert["binding"]["certificate_hash"] = hashlib.sha256(
+        _canonical_bytes(cert["cir"])).hexdigest()
+
+    vr = CertificateVerifier.verify(cert)
+    assert not vr.valid, (
+        "verifier accepted a forged graph-source link")
+    assert any("graph-source" in f.lower() or "re-deriv" in f.lower()
+               for f in vr.failures), vr.failures
