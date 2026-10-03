@@ -8,6 +8,20 @@ builds on is mapped in
 `docs/design/guard-dominance-current-state.md`. All six product
 decisions are marked CHOSEN below.
 
+**Update 2026-10-03 (Option 2 implemented):** the source-level strict
+guard modifier is now implemented on branch `feat/strict-guard-source`.
+`guard x against hallucination { ..., strict: true }` is parsed into
+`GuardStmt.strict`, lowered to `ValidationNode.strict`, and honored by
+the executor (a failing strict guard raises `GuardViolation` even when
+the global `--strict-guard` flag is off). The dominance claim is now
+`enforced` only when every guard on every dominating path to each
+effectful node is source-level strict; the global `strict_guard` run
+flag is recorded in the certificate for information only and does not
+affect the claim. The verifier derives the claim from the re-lowered
+graph alone and ignores `cir.strict_guard`. See
+`examples/strict_guarded_pipeline.chimera`, which verifies as
+`enforced` via `chimera verify`.
+
 ## 0. The check in one paragraph
 
 Every effectful CIR node must be guard-dominated along belief-flow
@@ -389,6 +403,30 @@ URLs. Every novelty claim below is marked **unverified**.
    (`InquiryNode` is a source, so the requirement is vacuous for it).
 
 ## What was verified, and what was not
+
+**Update 2026-10-03 (guard strength):** the `enforced` claim is
+structural only. It attests that every effectful node is dominated by
+source-level strict guards. It does NOT guarantee the guards are
+meaningful or calibrated:
+
+- A guard with `max_risk: 1.0` requires score >= 0, which can never
+  fail, yet still yields `enforced`. Such vacuous guards are now
+  flagged: lowering warns, `--require-dominance` raises
+  `LoweringError`, and the certificate's `dominance.guards` list marks
+  each guard `vacuous: true/false` with its strategy, thresholds,
+  strict flag, and `score_source`.
+- `dominance.guard_strength` is `vacuous`, `uncalibrated`, or
+  `nonvacuous` (worst case over dominating guards). `chimera verify`
+  prints a WARNING for vacuous or uncalibrated guards.
+- Uncalibrated guards judge raw posterior means. The H1 confirmatory
+  experiment (4,000 calls, zero parse failures) found agreement AUROC
+  0.6714 (95% CI [0.6280, 0.7185]) in Mode A and 0.7519 (95% CI
+  [0.7121, 0.7908]) in Mode B. These are well below perfect
+  discrimination; a threshold on an uncalibrated mean is not a
+  guarantee.
+- The verifier recomputes the guard list from the re-derived graph and
+  rejects certificates whose list differs (e.g., hiding a vacuous
+  guard).
 
 Verified during implementation:
 - The dominance audit: 11 `.chimera` files across examples/, tests/,

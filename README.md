@@ -134,11 +134,34 @@ python -m chimera.cli verify cert.json
 
 `--cert-out` writes a `chimeralang-cert/v2` certificate with a `cir`
 section: the program source, the lowered graph, per-guard
-`score_source` (`calibrated`/`uncalibrated`), the `strict_guard` flag,
-and a dominance claim (`enforced` only when dominance holds and
-`strict_guard` was on, else `non-blocking` or `absent`).
+`score_source` (`calibrated`/`uncalibrated`), the `strict_guard` run
+flag (recorded for information only), and a dominance claim
+(`enforced` only when dominance holds and every guard on every
+dominating path is source-level `strict: true`; otherwise
+`non-blocking` or `absent`).
 `chimera verify` recomputes dominance from the embedded graph and
-never trusts the stored claim. See `docs/design/guard-dominance.md`.
+never trusts the stored claim or the `strict_guard` flag. A
+source-level strict guard (`guard x against hallucination {
+max_risk: 0.2, strict: true }`) makes a failing guard raise
+`GuardViolation` and halt the run, like `--strict-guard`, but it is
+part of the program source and therefore determines the certificate
+claim. See `docs/design/guard-dominance.md` and
+`examples/strict_guarded_pipeline.chimera`.
+
+**What "enforced" means.** The `enforced` claim is structural only: it
+attests that every effectful node is dominated by source-level strict
+guards. It does NOT guarantee the guards are meaningful or calibrated.
+A guard with `max_risk: 1.0` can never fail (it requires score >= 0)
+yet still yields `enforced`. The certificate's `dominance.guards`
+list flags each dominating guard as `vacuous` (can never fail) and
+records its `score_source`; `dominance.guard_strength` is `vacuous`,
+`uncalibrated`, or `nonvacuous` (worst case). `chimera verify` prints
+a WARNING for vacuous or uncalibrated guards. Uncalibrated guards use
+raw posterior means; the H1 confirmatory experiment found agreement
+AUROC 0.6714 (CI [0.6280, 0.7185]) in Mode A and 0.7519 (CI [0.7121,
+0.7908]) in Mode B, well below perfect discrimination. Lowering warns
+on vacuous guards; `--require-dominance` makes a vacuous dominating
+guard a `LoweringError`.
 
 ### Saving and reusing symbols
 

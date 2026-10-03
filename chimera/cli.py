@@ -450,6 +450,24 @@ def cmd_verify(
     print(f"  signature status:   {result.signature_status}")
     print(f"  graph-source link:  {result.link_status}")
     print(f"  checks run:         {result.checks_run}")
+    # Guard strength warnings: print a clear line when any dominating
+    # guard is vacuous or uncalibrated. None when all are non-vacuous
+    # and calibrated.
+    dom = (certificate.get("cir", {}).get("dominance", {})
+           if isinstance(certificate, dict) else {})
+    guards = dom.get("guards", []) if isinstance(dom, dict) else []
+    vacuous_guards = [g for g in guards if g.get("vacuous")]
+    uncalibrated_guards = [g for g in guards
+                           if g.get("score_source") == "uncalibrated"
+                           and not g.get("vacuous")]
+    if vacuous_guards:
+        print(f"  WARNING: {len(vacuous_guards)} dominating guard(s) are "
+              f"vacuous (can never fail); the 'enforced' claim is structural "
+              f"only.")
+    if uncalibrated_guards:
+        print(f"  WARNING: {len(uncalibrated_guards)} dominating guard(s) are "
+              f"uncalibrated (score_source=uncalibrated); thresholds are on "
+              f"uncalibrated posterior means.")
     if result.failures:
         print("  failures:")
         for failure in result.failures:

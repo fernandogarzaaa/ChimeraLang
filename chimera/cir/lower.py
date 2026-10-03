@@ -187,6 +187,7 @@ class CIRLowering:
                     strategy=decl.strategy,
                     target_id=source_id,
                     max_variance=decl.max_variance,
+                    strict=decl.strict,
                 )
                 graph.add_node(val)
                 if source_id:
@@ -271,8 +272,12 @@ class CIRLowering:
         is a lowering warning. Under require_dominance a guard with
         strategy 'mean' or 'both' and no calibrator is also a
         LoweringError, because numeric thresholds on uncalibrated
-        posterior means are unsound.
+        posterior means are unsound. Under require_dominance a vacuous
+        dominating guard (one that can never fail) is also a
+        LoweringError, because it provides no actual protection.
         """
+        from chimera.cir.nodes import is_vacuous_guard
+
         if self._require_dominance and self._calibrator is None:
             for nid, node in graph.nodes.items():
                 if (isinstance(node, ValidationNode)
@@ -283,6 +288,18 @@ class CIRLowering:
                         f"with no calibrator: numeric thresholds on "
                         f"uncalibrated posterior means are unsound. Supply a "
                         f"calibrator or use strategy 'variance'."
+                    )
+        # Warn on vacuous guards (those that can never fail).
+        for nid, node in graph.nodes.items():
+            if isinstance(node, ValidationNode):
+                if is_vacuous_guard(node.strategy, node.max_risk,
+                                    node.max_variance):
+                    name = self._belief_name_for(graph, nid) or nid
+                    self.warnings.append(
+                        f"guard on '{name}' is vacuous: it can never fail "
+                        f"(strategy={node.strategy}, max_risk={node.max_risk}, "
+                        f"max_variance={node.max_variance}). A vacuous guard "
+                        f"provides structural dominance but no protection."
                     )
         consumers: list[tuple[str, str]] = [
             (nid, "evolve")
@@ -303,6 +320,48 @@ class CIRLowering:
                 if self._require_dominance:
                     raise LoweringError(msg)
                 self.warnings.append(msg)
+            elif self._require_dominance:
+                # Dominated, but check for vacuous dominating guards.
+                for gid in self._dominating_guards(graph, cid):
+                    gnode = graph.nodes[gid]
+                    if isinstance(gnode, ValidationNode) and is_vacuous_guard(
+                            gnode.strategy, gnode.max_risk, gnode.max_variance):
+                        name = self._belief_name_for(graph, gid) or gid
+                        raise LoweringError(
+                            f"guard dominance: effectful {kind} of belief "
+                            f"'{self._belief_name_for(graph, cid) or cid}' "
+                            f"is dominated by vacuous guard '{name}' "
+                            f"(strategy={gnode.strategy}, "
+                            f"max_risk={gnode.max_risk}, "
+                            f"max_variance={gnode.max_variance}). A vacuous "
+                            f"guard can never fail and provides no protection."
+                        )
+
+    def _dominating_guards(self, graph: CIRGraph, consumer_id: str) -> set[str]:
+        """ValidationNode ids that dominate the consumer: positioned after
+        the last ConsensusNode on every belief-flow path to it."""
+        nodes = graph.nodes
+        paths: list[list[str]] = []
+        stack: list[tuple[str, list[str], frozenset]] = [
+            (consumer_id, [consumer_id], frozenset({consumer_id}))]
+        while stack:
+            nid, path, seen = stack.pop()
+            preds = [p for p in graph.predecessors(nid) if p.id not in seen]
+            if not preds:
+                paths.append(list(reversed(path)))
+                continue
+            for p in preds:
+                stack.append((p.id, path + [p.id], seen | {p.id}))
+        guards: set[str] = set()
+        for path in paths:
+            last_cons = -1
+            for i, nid in enumerate(path):
+                if isinstance(nodes[nid], ConsensusNode):
+                    last_cons = i
+            for i, nid in enumerate(path):
+                if isinstance(nodes[nid], ValidationNode) and i > last_cons:
+                    guards.add(nid)
+        return guards
 
     # ------------------------------------------------------------------
     # Pass 2: Dead belief elimination

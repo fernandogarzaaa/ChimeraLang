@@ -848,7 +848,7 @@ def test_require_dominance_rejects_vacuous_guard():
         f"expected vacuous-guard LoweringError, got: {exc_info.value}"
 
 
-def _cert_for_source(src, adapter=None):
+def _cert_for_source(src, adapter=None, calibrator=None):
     from chimera.cir import run_cir
     from chimera.cir.certify import certify_cir
     from chimera.cir.executor import InquiryResponse
@@ -857,9 +857,11 @@ def _cert_for_source(src, adapter=None):
         return InquiryResponse(confidence=0.95, answer="yes")
 
     prog = parse_src(src)
-    result = run_cir(prog, inquiry_adapter=adapter or _adapter)
+    result = run_cir(prog, inquiry_adapter=adapter or _adapter,
+                     calibrator=calibrator)
     graph = CIRLowering().lower(prog)
-    return certify_cir(src, graph, result, strict_guard=False)
+    return certify_cir(src, graph, result, strict_guard=False,
+                       calibrator=calibrator)
 
 
 def test_certificate_lists_dominating_guards():
@@ -878,7 +880,8 @@ def test_certificate_lists_dominating_guards():
     assert g["vacuous"] is False
     assert g["score_source"] in ("calibrated", "uncalibrated")
     assert "guard_strength" in dom
-    assert dom["guard_strength"] == "nonvacuous"
+    # No calibrator supplied, so the guard is uncalibrated (but not vacuous).
+    assert dom["guard_strength"] == "uncalibrated"
 
 
 def test_certificate_marks_vacuous_guard():
@@ -936,3 +939,40 @@ def test_verifier_rejects_hidden_vacuous_guard():
     res = CertificateVerifier().verify(tampered)
     assert not res.valid, \
         "verifier must reject a certificate hiding a vacuous guard"
+
+
+def test_verify_cli_warns_on_vacuous_or_uncalibrated():
+    """Red (f): chimera verify prints a clear warning line when any
+    dominating guard is vacuous or uncalibrated, and none when all are
+    non-vacuous and calibrated."""
+    import json
+    import subprocess
+    import sys
+    import tempfile
+    from pathlib import Path
+
+    # Vacuous guard -> warning.
+    cert_vac = _cert_for_source(VACUOUS_RISK_SOURCE)
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json",
+                                     delete=False) as f:
+        json.dump(cert_vac, f)
+        vac_path = f.name
+    proc = subprocess.run(
+        [sys.executable, "-m", "chimera.cli", "verify", vac_path],
+        capture_output=True, text=True, cwd=str(Path(__file__).parent.parent))
+    assert "WARNING" in proc.stdout, \
+        f"expected WARNING for vacuous guard, got: {proc.stdout}"
+    assert "vacuous" in proc.stdout.lower()
+
+    # Uncalibrated (but non-vacuous) -> warning.
+    cert_uncal = _cert_for_source(STRICT_CANONICAL)
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".json",
+                                     delete=False) as f:
+        json.dump(cert_uncal, f)
+        uncal_path = f.name
+    proc2 = subprocess.run(
+        [sys.executable, "-m", "chimera.cli", "verify", uncal_path],
+        capture_output=True, text=True, cwd=str(Path(__file__).parent.parent))
+    assert "WARNING" in proc2.stdout, \
+        f"expected WARNING for uncalibrated guard, got: {proc2.stdout}"
+    assert "uncalibrated" in proc2.stdout.lower()
