@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Universal inquiry adapters (`chimera.adapters`).** Any model provider
+  can now plug into CIR inquiry: each provider implements
+  `chat(model, prompt) -> str`, and `make_adapter` maps agent names to
+  (provider, model), parses verdict + confidence, and returns
+  `InquiryResponse`. Built-in presets in `chimera.adapters.providers`:
+  nine OpenAI-compatible providers (OpenAI, Nebius, OpenRouter,
+  Together, Groq, DeepSeek, Mistral, xAI, Ollama) via a shared
+  transport, plus native Anthropic, Gemini, and Cohere chat functions.
+  Unknown agent or provider names raise `ValueError`; no silent
+  fallback. Ten new tests in `tests/test_adapters.py` (no network).
+
 - **Static guard-dominance check.** New `_pass_guard_dominance` lowering
   pass (between structural and dead-belief elimination): every
   effectful consumer (`evolve` node, `emit` target) must be dominated
