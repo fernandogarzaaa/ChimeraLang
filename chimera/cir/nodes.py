@@ -200,6 +200,11 @@ class ValidationNode(CIRNode):
     target_id: str = ""
     # Optional explicit variance limit; None keeps the legacy 0.05 default.
     max_variance: float | None = None
+    # Source-level strict modifier, lowered from GuardStmt.strict. When
+    # True the executor raises GuardViolation on failure. This flag (not
+    # the global strict_guard run flag) determines the certificate's
+    # dominance claim.
+    strict: bool = False
 
 
 @dataclass

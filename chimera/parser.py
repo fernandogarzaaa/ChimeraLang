@@ -650,6 +650,7 @@ class Parser:
         max_risk = 0.2
         strategy = "both"
         max_variance: float | None = None
+        strict = False
         if self._check(TokenKind.LBRACE):
             self._advance()
             self._skip_newlines()
@@ -665,12 +666,14 @@ class Parser:
                     strategy = self._advance().value
                 elif key == "max_variance":
                     max_variance = float(self._advance().value)
+                elif key == "strict":
+                    strict = self._advance().value == "true"
                 self._match(TokenKind.COMMA)
                 self._skip_newlines()
             self._expect(TokenKind.RBRACE, "Expected '}' to close guard block")
         self._expect_line_end()
         return GuardStmt(target=target, max_risk=max_risk, strategy=strategy,
-                         max_variance=max_variance)
+                         max_variance=max_variance, strict=strict)
 
     def _parse_evolve(self) -> EvolveStmt:
         """evolve <name> until stable { max_iter: 3 }"""

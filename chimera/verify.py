@@ -307,20 +307,25 @@ class CertificateVerifier:
         return _canonical_bytes(serialize_graph(graph)), ""
 
     @staticmethod
-    def _recompute_dominance(graph: dict) -> tuple[bool, list[dict]]:
+    def _recompute_dominance(graph: dict) -> tuple[bool, bool, list[dict]]:
         """Independently recompute dominance from the embedded graph.
 
         Standalone reimplementation operating only on the serialized
         structure. Never trusts a stored flag or stored evidence.
+        Returns (dominated, all_strict, evidence). all_strict is True
+        iff every ValidationNode dominating a consumer on any path
+        carries strict=True. The cir.strict_guard flag is ignored.
         """
         kinds = {n["id"]: n["kind"] for n in graph.get("nodes", [])}
+        strict_of = {n["id"]: bool(n.get("strict", False))
+                     for n in graph.get("nodes", [])}
         preds: dict[str, list[str]] = {}
         for e in graph.get("edges", []):
             preds.setdefault(e["target_id"], []).append(e["source_id"])
         consensus = {nid for nid, k in kinds.items()
                      if k == "ConsensusNode"}
 
-        def dominated(consumer_id: str) -> bool:
+        def paths_to(consumer_id: str) -> list[list[str]]:
             paths: list[list[str]] = []
             stack = [(consumer_id, [consumer_id], {consumer_id})]
             while stack:
@@ -331,21 +336,28 @@ class CertificateVerifier:
                     continue
                 for p in ps:
                     stack.append((p, path + [p], seen | {p}))
+            return paths
+
+        def dominating_guards(path: list[str]) -> list[str]:
+            last_cons = -1
+            for i, nid in enumerate(path):
+                if nid in consensus:
+                    last_cons = i
+            return [nid for i, nid in enumerate(path)
+                    if kinds.get(nid) == "ValidationNode" and i > last_cons]
+
+        def dominated(consumer_id: str) -> bool:
+            paths = paths_to(consumer_id)
             if not paths:
                 return False
             for path in paths:
-                last_cons = -1
-                for i, nid in enumerate(path):
-                    if nid in consensus:
-                        last_cons = i
-                if not any(kinds.get(nid) == "ValidationNode"
-                           and i > last_cons
-                           for i, nid in enumerate(path)):
+                if not dominating_guards(path):
                     return False
             return True
 
         evidence: list[dict] = []
         all_ok = True
+        all_guards: set[str] = set()
         consumers = (
             [n["id"] for n in graph.get("nodes", [])
              if n["kind"] == "EvolutionNode"]
@@ -353,13 +365,17 @@ class CertificateVerifier:
         )
         for cid in consumers:
             ok = dominated(cid)
+            if ok:
+                for path in paths_to(cid):
+                    all_guards.update(dominating_guards(path))
             evidence.append({"consumer": cid, "dominated": ok})
             all_ok = all_ok and ok
-        return all_ok, evidence
+        all_strict = all(strict_of[gid] for gid in all_guards)
+        return all_ok, all_strict, evidence
 
     @staticmethod
-    def _expected_dominance_claim(dominated: bool, strict_guard: bool) -> str:
-        if dominated and strict_guard:
+    def _expected_dominance_claim(dominated: bool, all_strict: bool) -> str:
+        if dominated and all_strict:
             return "enforced"
         if dominated:
             return "non-blocking"
@@ -419,18 +435,21 @@ class CertificateVerifier:
             failures.append("cir: graph_hash mismatch (graph modified)")
 
         # --- Check 5: dominance recomputation ------------------------------
-        # Recomputed from the embedded graph structure. The stored claim
-        # and stored evidence are never trusted.
+        # Recomputed from the embedded graph structure. The stored claim,
+        # the stored evidence, and the cir.strict_guard run flag are
+        # never trusted: the expected claim is derived from the
+        # source-level strict flags on the re-derived graph alone.
         checks_run += 1
-        dominated, _evidence = (
+        dominated, all_strict, _evidence = (
             CertificateVerifier._recompute_dominance(graph))
         expected_claim = CertificateVerifier._expected_dominance_claim(
-            dominated, bool(cir.get("strict_guard")))
+            dominated, all_strict)
         stored_claim = (cir.get("dominance") or {}).get("claim")
         if stored_claim != expected_claim:
             failures.append(
                 f"dominance: stored claim {stored_claim!r} does not match "
-                f"recomputed {expected_claim!r} (dominated={dominated})")
+                f"recomputed {expected_claim!r} (dominated={dominated}, "
+                f"all_strict={all_strict})")
 
         # --- Check 5b: graph-source link ----------------------------------
         # Re-lower cir.program_source with the real parser and lowering

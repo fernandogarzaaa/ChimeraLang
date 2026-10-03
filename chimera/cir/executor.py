@@ -450,7 +450,7 @@ class CIRExecutor:
                 "passed": False,
                 "violations": list(violations),
             })
-            if self._strict:
+            if self._strict or node.strict:
                 raise GuardViolation(msg)
         else:
             result.trace.append(

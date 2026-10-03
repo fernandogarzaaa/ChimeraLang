@@ -187,6 +187,7 @@ class CIRLowering:
                     strategy=decl.strategy,
                     target_id=source_id,
                     max_variance=decl.max_variance,
+                    strict=decl.strict,
                 )
                 graph.add_node(val)
                 if source_id:

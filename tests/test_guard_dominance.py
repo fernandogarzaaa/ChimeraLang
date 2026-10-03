@@ -288,10 +288,13 @@ def test_certificate_carries_score_source_and_strict_guard():
 
 
 def test_dominance_claim_enforced_only_with_strict_guard():
-    # Decision 4: "dominance: enforced" only when dominance holds AND
-    # strict_guard was on.
+    # Option 2 (supersedes Decision 4): "dominance: enforced" only when
+    # dominance holds AND every dominating guard is source-level strict.
+    # The global strict_guard run flag does not affect the claim.
+    # CANONICAL uses a non-strict guard, so the claim is non-blocking
+    # regardless of the flag.
     cert_strict = _make_certed_run(strict_guard=True)
-    assert cert_strict["cir"]["dominance"]["claim"] == "enforced"
+    assert cert_strict["cir"]["dominance"]["claim"] == "non-blocking"
     cert_lax = _make_certed_run(strict_guard=False)
     assert cert_lax["cir"]["dominance"]["claim"] == "non-blocking"
 
@@ -444,8 +447,11 @@ def _dominance_verdicts(graph):
             v_lower = v_lower and lowering._dominates(graph, eid)
 
     d = serialize_graph(graph)
-    v_certify = check_dominance(d)["dominated"]
-    v_verify, _ = CertificateVerifier._recompute_dominance(d)
+    dom_certify = check_dominance(d)
+    v_certify = dom_certify["dominated"]
+    v_verify, all_strict_verify, _ = CertificateVerifier._recompute_dominance(d)
+    assert dom_certify["all_strict"] == all_strict_verify, \
+        "certify and verify must agree on all_strict"
     return v_lower, v_certify, v_verify
 
 
@@ -532,8 +538,19 @@ def test_not_rederived_never_valid_with_enforced():
     import sys
     from unittest import mock
     from chimera.verify import CertificateVerifier
+    from chimera.cir import run_cir
+    from chimera.cir.certify import certify_cir
+    from chimera.cir.executor import InquiryResponse
 
-    cert = _make_certed_run(strict_guard=True)
+    def adapter(prompt, agents):
+        return InquiryResponse(confidence=0.95, answer="yes")
+
+    # STRICT_CANONICAL has a source-level strict guard, so the claim is
+    # genuinely "enforced" under Option 2.
+    prog = parse_src(STRICT_CANONICAL)
+    result = run_cir(prog, inquiry_adapter=adapter)
+    graph = CIRLowering().lower(prog)
+    cert = certify_cir(STRICT_CANONICAL, graph, result, strict_guard=False)
     assert cert["cir"]["dominance"]["claim"] == "enforced"
 
     blocked = {
@@ -646,7 +663,8 @@ def test_strict_modifier_parses_to_guard_stmt_and_validation_node():
     """Red: the parser must accept `strict: true` on a guard and thread it
     through GuardStmt into ValidationNode.strict."""
     prog = parse_src(STRICT_CANONICAL)
-    guards = [s for s in prog.statements if type(s).__name__ == "GuardStmt"]
+    guards = [s for s in prog.declarations
+              if type(s).__name__ == "GuardStmt"]
     assert guards, "expected a GuardStmt in the parsed program"
     assert guards[0].strict is True, "GuardStmt.strict must be True"
 
@@ -659,7 +677,8 @@ def test_strict_modifier_parses_to_guard_stmt_and_validation_node():
         "ValidationNode.strict must be True"
 
     prog2 = parse_src(NONSTRICT_CANONICAL)
-    guards2 = [s for s in prog2.statements if type(s).__name__ == "GuardStmt"]
+    guards2 = [s for s in prog2.declarations
+               if type(s).__name__ == "GuardStmt"]
     assert guards2[0].strict is False, \
         "GuardStmt.strict must default to False"
 

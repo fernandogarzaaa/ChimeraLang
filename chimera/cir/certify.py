@@ -48,6 +48,7 @@ def serialize_graph(graph: Any) -> dict[str, Any]:
                 "strategy": n.strategy,
                 "max_variance": n.max_variance,
                 "target_id": n.target_id,
+                "strict": n.strict,
             })
         elif isinstance(n, ConsensusNode):
             d.update({
@@ -87,8 +88,15 @@ def check_dominance(graph_dict: dict[str, Any]) -> dict[str, Any]:
     (EvolutionNode, emit target) is dominated iff every belief-flow
     path from a source to it passes through a ValidationNode
     positioned after the last ConsensusNode on that path.
+
+    Also reports all_strict: True iff every ValidationNode that
+    dominates a consumer on any path carries strict=True. Only
+    source-level strict guards count; the global strict_guard run
+    flag is not part of the graph and does not affect the claim.
     """
     kinds = {n["id"]: n["kind"] for n in graph_dict["nodes"]}
+    strict_of = {n["id"]: bool(n.get("strict", False))
+                 for n in graph_dict["nodes"]}
     preds: dict[str, list[str]] = {}
     for e in graph_dict["edges"]:
         preds.setdefault(e["target_id"], []).append(e["source_id"])
@@ -117,13 +125,31 @@ def check_dominance(graph_dict: dict[str, Any]) -> dict[str, Any]:
                 return False, paths
         return True, paths
 
+    def dominating_guards(consumer_id: str) -> set[str]:
+        """ValidationNode ids positioned after the last ConsensusNode on
+        any source-to-consumer path: the guards that dominate it."""
+        _, paths = dominated(consumer_id)
+        guards: set[str] = set()
+        for path in paths:
+            last_cons = -1
+            for i, nid in enumerate(path):
+                if nid in consensus:
+                    last_cons = i
+            for i, nid in enumerate(path):
+                if kinds.get(nid) == "ValidationNode" and i > last_cons:
+                    guards.add(nid)
+        return guards
+
     evidence: list[dict[str, Any]] = []
     all_ok = True
+    all_guards: set[str] = set()
     consumers = ([n["id"] for n in graph_dict["nodes"]
                   if n["kind"] == "EvolutionNode"]
                  + [eid for eid in graph_dict["emit_ids"] if eid in kinds])
     for cid in consumers:
         ok, paths = dominated(cid)
+        guards = dominating_guards(cid) if ok else set()
+        all_guards |= guards
         evidence.append({
             "consumer": cid,
             "consumer_kind": kinds[cid],
@@ -131,13 +157,17 @@ def check_dominance(graph_dict: dict[str, Any]) -> dict[str, Any]:
             "paths": paths,
         })
         all_ok = all_ok and ok
-    return {"dominated": all_ok, "evidence": evidence}
+    all_strict = all(strict_of[gid] for gid in all_guards)
+    return {"dominated": all_ok, "all_strict": all_strict,
+            "evidence": evidence}
 
 
-def dominance_claim(dominated: bool, strict_guard: bool) -> str:
-    """Decision 4: 'enforced' only when dominance holds AND strict_guard
-    was on; otherwise 'non-blocking' or 'absent'."""
-    if dominated and strict_guard:
+def dominance_claim(dominated: bool, all_strict: bool) -> str:
+    """Decision 4 (Option 2): 'enforced' only when dominance holds AND
+    every guard on every dominating path to each effectful node is
+    source-level strict. The global strict_guard run flag does not
+    affect the claim."""
+    if dominated and all_strict:
         return "enforced"
     if dominated:
         return "non-blocking"
@@ -158,8 +188,11 @@ def certify_cir(
 
     source: the program source text. graph: the lowered CIRGraph.
     result: the CIRResult (for the structured validations list).
-    strict_guard: whether the run used strict guard mode. calibrator:
-    the calibrator supplied to the run, if any.
+    strict_guard: whether the run used strict guard mode. This is
+    recorded for information only; it does not affect the dominance
+    claim. The claim is derived solely from the source-level strict
+    flags on the graph's ValidationNodes (Option 2).
+    calibrator: the calibrator supplied to the run, if any.
     """
     graph_dict = serialize_graph(graph)
     graph_hash = hashlib.sha256(
@@ -172,7 +205,7 @@ def certify_cir(
         "graph": graph_dict,
         "graph_hash": graph_hash,
         "dominance": {
-            "claim": dominance_claim(dom["dominated"], strict_guard),
+            "claim": dominance_claim(dom["dominated"], dom["all_strict"]),
             "evidence": dom["evidence"],
         },
         "validations": list(result.validations),
