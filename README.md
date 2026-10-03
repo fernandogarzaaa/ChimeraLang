@@ -134,11 +134,19 @@ python -m chimera.cli verify cert.json
 
 `--cert-out` writes a `chimeralang-cert/v2` certificate with a `cir`
 section: the program source, the lowered graph, per-guard
-`score_source` (`calibrated`/`uncalibrated`), the `strict_guard` flag,
-and a dominance claim (`enforced` only when dominance holds and
-`strict_guard` was on, else `non-blocking` or `absent`).
+`score_source` (`calibrated`/`uncalibrated`), the `strict_guard` run
+flag (recorded for information only), and a dominance claim
+(`enforced` only when dominance holds and every guard on every
+dominating path is source-level `strict: true`; otherwise
+`non-blocking` or `absent`).
 `chimera verify` recomputes dominance from the embedded graph and
-never trusts the stored claim. See `docs/design/guard-dominance.md`.
+never trusts the stored claim or the `strict_guard` flag. A
+source-level strict guard (`guard x against hallucination {
+max_risk: 0.2, strict: true }`) makes a failing guard raise
+`GuardViolation` and halt the run, like `--strict-guard`, but it is
+part of the program source and therefore determines the certificate
+claim. See `docs/design/guard-dominance.md` and
+`examples/strict_guarded_pipeline.chimera`.
 
 ### Saving and reusing symbols
 

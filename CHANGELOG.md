@@ -31,6 +31,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fail closed; v1 verification is unchanged.
 - **Example:** `examples/guarded_pipeline.chimera`, a canonical
   guard-dominated pipeline passing `--require-dominance`.
+- **Source-level strict guard modifier.** `guard x against hallucination
+  { ..., strict: true }` is now part of the language (EBNF, parser,
+  `GuardStmt.strict`, `ValidationNode.strict`). A failing strict guard
+  raises `GuardViolation` and halts the run even when the global
+  `--strict-guard` flag is off. The certificate dominance claim is now
+  `enforced` only when every guard on every dominating path to each
+  effectful node is source-level strict; the global `strict_guard` run
+  flag is recorded in the certificate for information only and does
+  not affect the claim. The verifier derives the claim from the
+  re-lowered graph alone and ignores `cir.strict_guard`.
+  `examples/strict_guarded_pipeline.chimera` verifies as `enforced`
+  via `chimera verify`.
 
 - **Agreement resolve strategy with opt-in calibration.** `resolve` now
   accepts `strategy: agreement` (the default when a belief has more
