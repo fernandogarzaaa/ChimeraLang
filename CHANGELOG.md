@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Agreement resolve strategy with opt-in calibration.** `resolve` now
+  accepts `strategy: agreement` (the default when a belief has more
+  than one source with answers), `strategy: pooled` (the Stage 2 Beta
+  algebra), and `strategy: dempster_shafer` (accepted as an alias of
+  `pooled` with a lowering warning). Agreement voting
+  (`chimera/cir/agreement.py`) counts normalized answers (same
+  normalization as the H1 experiment), winner is the most common with
+  ties broken by earliest source in agent order, and the resolved
+  belief carries raw agreement (votes/N), a Laplace-smoothed Beta
+  posterior (unanimous 3/3 gives Beta(4,1), mean 0.8, never 1.0), and
+  the winning answer text. The comparator and normalizer are pluggable.
+  `chimera/cir/calibration.py` adds `LogisticCalibrator`: deterministic
+  pure-Python logistic fit, JSON round-trip carrying n, dataset hash,
+  and fit date, refusing fewer than `MIN_FIT_N = 30` points.
+  `run_cir` accepts `calibrator=...`; the CLI accepts
+  `--calibrator=PATH`. `calibrated_p` appears on resolved beliefs only
+  when a calibrator is supplied; guard and emit use it when present,
+  otherwise the uncalibrated posterior with a lowering warning.
+  Behavior change: the default resolve strategy changed from
+  `dempster_shafer` to `agreement`; multi-source beliefs with answers
+  now resolve by vote share instead of Beta pooling unless
+  `strategy: pooled` is given explicitly.
+
 - **CIR fan-out: one `InquiryNode` per agent.** A belief with
   `agents: [a, b]` now lowers to two `InquiryNode`s (one per agent) and
   `resolve` pools them with the shipped `combine_pseudocount` chain.
@@ -25,6 +48,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   any unknown agent instead of silently falling back to one model.
 
 ### Fixed
+
+- **Pooling algebra no longer saturates.** `BetaDist.combine_pseudocount`
+  (and its alias `combine_ds`) now adds evidence counts directly,
+  `(alpha + alpha', beta + beta')`, with the K conflict check retained.
+  The old rule `(alpha + alpha' - 1, beta + beta' - 1)` with its
+  `max(., 1e-6)` clamp drove the raw beta to zero and negative for
+  agreeing high-confidence sources, so the pooled mean saturated at
+  exactly 1.0 (e.g. five 0.95 sources at strength 10). The new rule
+  cannot clamp: parameters are sums of strictly positive
+  pseudocounts. Behavior change: pooled means are now strength-weighted
+  averages of the input means (exactly the arithmetic mean for equal
+  strengths); `Beta(8,2) + Beta(8,2)` now pools to `Beta(16,4)` with
+  mean 0.8 instead of `Beta(15,3)` with mean 0.8333. Downstream
+  thresholds on combined means fire differently (less extreme).
+  `_exec_inquiry`'s seeded-prior path used the same old formula inline;
+  it now uses `combine_pseudocount`, and a conflicting seeded prior is
+  recorded as a guard violation instead of being silently merged.
 
 - **Evolve after resolve/guard now re-inquires.** `_exec_evolution` walked only a
   `subgraph_entry` that had to be an `InquiryNode`, so `evolve` after `resolve`

@@ -615,13 +615,13 @@ class Parser:
         return InquireExpr(prompt=prompt, agents=agents, ttl=ttl)
 
     def _parse_resolve(self) -> ResolveStmt:
-        """resolve <name> with consensus { threshold: 0.8, strategy: dempster_shafer }"""
+        """resolve <name> with consensus { threshold: 0.8, strategy: agreement }"""
         self._expect(TokenKind.RESOLVE)
         target = self._expect(TokenKind.IDENT, "Expected belief name").value
         self._expect(TokenKind.WITH, "Expected 'with' after belief name")
         self._advance()  # consume 'consensus' identifier
         threshold = 0.8
-        strategy = "dempster_shafer"
+        strategy = "agreement"
         if self._check(TokenKind.LBRACE):
             self._advance()
             self._skip_newlines()

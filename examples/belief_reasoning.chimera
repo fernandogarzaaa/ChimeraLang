@@ -10,7 +10,7 @@ belief cause := inquire {
   ttl: 3600
 }
 
-resolve cause with consensus { threshold: 0.75, strategy: dempster_shafer }
+resolve cause with consensus { threshold: 0.75 }
 guard cause against hallucination { max_risk: 0.25, strategy: both }
 evolve cause until stable { max_iter: 3 }
 

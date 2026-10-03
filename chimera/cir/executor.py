@@ -17,6 +17,12 @@ from chimera.cir.nodes import (
     BetaDist, BeliefState, CIRGraph, ConsensusNode,
     EdgeKind, EvolutionNode, InquiryNode, ValidationNode,
 )
+from chimera.cir.agreement import (
+    Comparator as AgreementComparator,
+    Normalizer as AnswerNormalizer,
+    resolve_agreement,
+)
+from chimera.cir.calibration import LogisticCalibrator
 
 
 # ---------------------------------------------------------------------------
@@ -39,6 +45,9 @@ class CIRResult:
     beliefs: dict[str, BetaDist] = field(default_factory=dict)
     emitted: list[tuple[str, BetaDist]] = field(default_factory=list)
     answers: dict[str, str] = field(default_factory=dict)
+    # Calibrated probabilities for emitted beliefs, present only when the
+    # run was given a calibrator (see chimera/cir/calibration.py).
+    calibrated: dict[str, float] = field(default_factory=dict)
     trace: list[str] = field(default_factory=list)
     guard_violations: list[str] = field(default_factory=list)
     evolution_iters: int = 0
@@ -168,12 +177,18 @@ class CIRExecutor:
         inquiry_adapter: InquiryAdapter | None = None,
         strict_guard: bool = False,
         agent_models: dict[str, str] | None = None,
+        calibrator: LogisticCalibrator | None = None,
+        agreement_comparator: AgreementComparator | None = None,
+        answer_normalizer: AnswerNormalizer | None = None,
     ) -> None:
         self._agent_models = dict(DEFAULT_AGENT_MODELS)
         if agent_models:
             self._agent_models.update(agent_models)
         self._adapter = inquiry_adapter or self._resolve_adapter()
         self._strict = strict_guard
+        self._calibrator = calibrator
+        self._agreement_comparator = agreement_comparator
+        self._answer_normalizer = answer_normalizer
 
     # ------------------------------------------------------------------
     # Public
@@ -213,6 +228,8 @@ class CIRExecutor:
                 result.beliefs[bs.name] = bs.distribution
                 if bs.answer is not None:
                     result.answers[bs.name] = bs.answer
+                if bs.calibrated_p is not None:
+                    result.calibrated[bs.name] = bs.calibrated_p
 
         for name, bs in graph.belief_store.items():
             result.beliefs[name] = bs.distribution
@@ -253,10 +270,17 @@ class CIRExecutor:
             prior = bs.distribution
             bs.observed = observed
             if abs(prior.alpha - 1.0) > 1e-9 or abs(prior.beta - 1.0) > 1e-9:
-                posterior = BetaDist(
-                    alpha=max(prior.alpha + observed.alpha - 1.0, 1e-6),
-                    beta=max(prior.beta + observed.beta - 1.0, 1e-6),
-                )
+                # Seeded prior: combine with the fresh observation using
+                # the same pseudocount algebra as consensus (pure
+                # addition, K conflict check, no subtract-one, no clamp).
+                # A conflicting seeded prior is a guard violation, not a
+                # silent merge; the prior is left in place.
+                try:
+                    posterior = prior.combine_pseudocount(observed)
+                except ValueError as e:
+                    result.trace.append(f"[inquiry] seeded prior conflict: {e}")
+                    result.guard_violations.append(f"inquiry prior conflict: {e}")
+                    return
                 result.trace.append(
                     f"[inquiry] seeded prior combined -> "
                     f"Beta({posterior.alpha:.1f},{posterior.beta:.1f})"
@@ -273,35 +297,77 @@ class CIRExecutor:
                 )
 
     def _exec_consensus(self, node: ConsensusNode, graph: CIRGraph, result: CIRResult) -> None:
-        result.trace.append(f"[consensus] strategy={node.strategy} threshold={node.threshold}")
+        strategy = node.strategy
+        if strategy == "dempster_shafer":
+            # Directly-constructed nodes bypass lowering; keep the alias
+            # working here too (lowering already warned and normalized).
+            strategy = "pooled"
+        result.trace.append(f"[consensus] strategy={strategy} threshold={node.threshold}")
         preds = graph.predecessors(node.id)
-        input_beliefs: list[tuple[str, BetaDist]] = []
+        input_beliefs: list[BeliefState] = []
         for pred in preds:
             bs = next(
                 (b for b in graph.belief_store.values() if b.node_id == pred.id), None
             )
             if bs is not None:
-                input_beliefs.append((bs.name, bs.distribution))
+                input_beliefs.append(bs)
 
         if not input_beliefs:
             result.trace.append("[consensus] no input beliefs — skipping")
             return
 
+        winner_answer: str | None = None
+        raw_agreement: float | None = None
         if len(input_beliefs) == 1:
             # A single input is not a combination; say so in the trace.
             result.trace.append("[consensus] single source, no combination performed")
-            combined = input_beliefs[0][1]
+            combined = input_beliefs[0].distribution
         else:
-            combined = input_beliefs[0][1]
-            for _, other_dist in input_beliefs[1:]:
-                try:
-                    combined = combined.combine_pseudocount(other_dist)
-                except ValueError as e:
-                    result.trace.append(f"[consensus] combination conflict: {e}")
-                    result.guard_violations.append(f"consensus conflict: {e}")
-                    return
+            answered = [bs for bs in input_beliefs if bs.answer is not None]
+            if strategy == "agreement" and len(answered) >= 2:
+                ar = resolve_agreement(
+                    [bs.answer for bs in answered],  # type: ignore[misc]
+                    comparator=self._agreement_comparator,
+                    normalizer=self._answer_normalizer,
+                )
+                combined = ar.posterior
+                winner_answer = ar.winner
+                raw_agreement = ar.agreement
+                result.trace.append(
+                    f"[consensus] agreement={ar.agreement:.3f} "
+                    f"({ar.votes}/{ar.n} votes) "
+                    f"posterior_mean={combined.mean:.3f} "
+                    f"winner={ar.winner!r} uncalibrated"
+                )
+            else:
+                if strategy == "agreement":
+                    result.trace.append(
+                        "[consensus] agreement strategy needs 2+ answered "
+                        "sources; falling back to pooled"
+                    )
+                combined = input_beliefs[0].distribution
+                for other in input_beliefs[1:]:
+                    try:
+                        combined = combined.combine_pseudocount(other.distribution)
+                    except ValueError as e:
+                        result.trace.append(f"[consensus] combination conflict: {e}")
+                        result.guard_violations.append(f"consensus conflict: {e}")
+                        return
+                result.trace.append(
+                    f"[consensus] pooled mean={combined.mean:.3f} "
+                    f"variance={combined.variance:.4f} uncalibrated"
+                )
+
+        # Opt-in calibration: map the uncalibrated posterior mean to a
+        # calibrated probability. calibrated_p is set only here, so it
+        # appears only when a calibrator was supplied.
+        calibrated_p: float | None = None
+        if self._calibrator is not None:
+            calibrated_p = self._calibrator.predict(combined.mean)
             result.trace.append(
-                f"[consensus] combined mean={combined.mean:.3f} variance={combined.variance:.4f}"
+                f"[consensus] calibrated_p={calibrated_p:.3f} "
+                f"(from uncalibrated {combined.mean:.3f}, "
+                f"calibrator n={self._calibrator.n})"
             )
 
         if combined.mean < node.threshold:
@@ -313,7 +379,13 @@ class CIRExecutor:
             if bs.node_id in node.input_ids:
                 bs.distribution = combined
                 bs.node_id = node.id
-                bs.provenance.append(f"consensus({node.strategy},mean={combined.mean:.3f})")
+                bs.provenance.append(f"consensus({strategy},mean={combined.mean:.3f})")
+                if winner_answer is not None:
+                    bs.answer = winner_answer
+                if raw_agreement is not None:
+                    bs.agreement = raw_agreement
+                if calibrated_p is not None:
+                    bs.calibrated_p = calibrated_p
 
     def _exec_validation(self, node: ValidationNode, graph: CIRGraph, result: CIRResult) -> None:
         limit = (f"max_variance={node.max_variance}"
@@ -333,10 +405,19 @@ class CIRExecutor:
         dist = bs.distribution
         violations: list[str] = []
 
+        # The guard judges P(correct). When a calibrator was supplied the
+        # resolved belief carries calibrated_p and it is used; otherwise
+        # the uncalibrated posterior mean is used (lowering warns loudly
+        # about the missing calibrator).
+        score = bs.calibrated_p if bs.calibrated_p is not None else dist.mean
+        score_label = "calibrated_p" if bs.calibrated_p is not None else "mean"
+
         if node.strategy in ("mean", "both"):
             required_mean = 1.0 - node.max_risk
-            if dist.mean < required_mean:
-                violations.append(f"mean {dist.mean:.3f} < required {required_mean:.3f}")
+            if score < required_mean:
+                violations.append(
+                    f"{score_label} {score:.3f} < required {required_mean:.3f}"
+                )
 
         if node.strategy in ("variance", "both"):
             # Explicit per-guard limit when set; otherwise the legacy 0.05
@@ -356,7 +437,7 @@ class CIRExecutor:
                 raise GuardViolation(msg)
         else:
             result.trace.append(
-                f"[guard] PASSED — mean={dist.mean:.3f} variance={dist.variance:.4f}"
+                f"[guard] PASSED — {score_label}={score:.3f} variance={dist.variance:.4f}"
             )
             bs.node_id = node.id
 
