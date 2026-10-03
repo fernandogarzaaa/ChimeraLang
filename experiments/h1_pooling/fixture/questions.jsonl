@@ -1,0 +1,40 @@
+{"id": "q01", "question": "What is the capital of France?", "gold_answers": ["Paris"]}
+{"id": "q02", "question": "What is 7 times 8?", "gold_answers": ["56", "fifty-six", "fifty six"]}
+{"id": "q03", "question": "Which planet is known as the Red Planet?", "gold_answers": ["Mars"]}
+{"id": "q04", "question": "What is the chemical symbol for water?", "gold_answers": ["H2O"]}
+{"id": "q05", "question": "Who wrote Romeo and Juliet?", "gold_answers": ["William Shakespeare", "Shakespeare"]}
+{"id": "q06", "question": "What year did the Apollo 11 moon landing occur?", "gold_answers": ["1969"]}
+{"id": "q07", "question": "What is the largest ocean on Earth?", "gold_answers": ["Pacific Ocean", "Pacific"]}
+{"id": "q08", "question": "How many sides does a hexagon have?", "gold_answers": ["6", "six"]}
+{"id": "q09", "question": "What is the capital of Japan?", "gold_answers": ["Tokyo"]}
+{"id": "q10", "question": "What gas do plants absorb for photosynthesis?", "gold_answers": ["carbon dioxide", "CO2"]}
+{"id": "q11", "question": "What is the square root of 144?", "gold_answers": ["12", "twelve"]}
+{"id": "q12", "question": "Which element has the chemical symbol O?", "gold_answers": ["oxygen"]}
+{"id": "q13", "question": "What is the tallest mountain in the world?", "gold_answers": ["Mount Everest", "Everest"]}
+{"id": "q14", "question": "In which year did World War II end?", "gold_answers": ["1945"]}
+{"id": "q15", "question": "What is the currency of the United Kingdom?", "gold_answers": ["pound", "British pound", "GBP"]}
+{"id": "q16", "question": "How many days are there in a leap year?", "gold_answers": ["366"]}
+{"id": "q17", "question": "What is the capital of Australia?", "gold_answers": ["Canberra"]}
+{"id": "q18", "question": "Which instrument has 88 keys?", "gold_answers": ["piano"]}
+{"id": "q19", "question": "What is the boiling point of water in Celsius?", "gold_answers": ["100", "100 degrees"]}
+{"id": "q20", "question": "Who painted the Mona Lisa?", "gold_answers": ["Leonardo da Vinci", "da Vinci"]}
+{"id": "q21", "question": "What is 15 percent of 200?", "gold_answers": ["30", "thirty"]}
+{"id": "q22", "question": "Which country has the largest population?", "gold_answers": ["India"]}
+{"id": "q23", "question": "What is the smallest prime number?", "gold_answers": ["2", "two"]}
+{"id": "q24", "question": "What language has the most native speakers?", "gold_answers": ["Mandarin", "Mandarin Chinese", "Chinese"]}
+{"id": "q25", "question": "How many continents are there?", "gold_answers": ["7", "seven"]}
+{"id": "q26", "question": "What is the capital of Canada?", "gold_answers": ["Ottawa"]}
+{"id": "q27", "question": "Which metal is liquid at room temperature?", "gold_answers": ["mercury"]}
+{"id": "q28", "question": "What is 9 squared?", "gold_answers": ["81", "eighty-one"]}
+{"id": "q29", "question": "Who developed the theory of relativity?", "gold_answers": ["Albert Einstein", "Einstein"]}
+{"id": "q30", "question": "What is the largest desert in the world?", "gold_answers": ["Antarctic Desert", "Antarctic"]}
+{"id": "q31", "question": "How many minutes are in an hour?", "gold_answers": ["60", "sixty"]}
+{"id": "q32", "question": "What is the capital of Brazil?", "gold_answers": ["Brasilia"]}
+{"id": "q33", "question": "Which planet is closest to the Sun?", "gold_answers": ["Mercury"]}
+{"id": "q34", "question": "What do you call a word that reads the same backward and forward?", "gold_answers": ["palindrome"]}
+{"id": "q35", "question": "What is the main ingredient in guacamole?", "gold_answers": ["avocado"]}
+{"id": "q36", "question": "How many players are on a soccer team?", "gold_answers": ["11", "eleven"]}
+{"id": "q37", "question": "What is the capital of Egypt?", "gold_answers": ["Cairo"]}
+{"id": "q38", "question": "Which ocean is the smallest?", "gold_answers": ["Arctic Ocean", "Arctic"]}
+{"id": "q39", "question": "What is 100 divided by 4?", "gold_answers": ["25", "twenty-five"]}
+{"id": "q40", "question": "What color do you get by mixing blue and yellow?", "gold_answers": ["green"]}
