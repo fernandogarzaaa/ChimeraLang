@@ -1,17 +1,20 @@
 """CIR certificate (v2) production.
 
 Builds chimeralang-cert/v2 certificates with a cir section for CIR
-program runs. The verifier (chimera/verify.py) recomputes every
-structural claim from the embedded graph; no stored flag is trusted.
+program runs. The verifier (chimera/verify.py) re-derives the graph
+from cir.program_source with the real parser and lowering, compares
+the ID-insensitive canonical shape to the embedded graph, recomputes
+the dominance predicate, and requires the stored claim to match.
 
-Trust boundary, stated plainly: the certificate proves that the
-embedded program source is unmodified (program_hash), that the
-embedded graph is unmodified (graph_hash), and that the embedded
-graph satisfies the dominance predicate as independently recomputed
-by the verifier. It does not prove that the embedded graph was
-produced by lowering the embedded source, because the offline
-verifier cannot re-run the lowering (stdlib-only contract). The
-graph-to-source link is attested by the producer.
+Trust boundary, stated exactly:
+  - When the verifier can import the chimera package, it proves the
+    embedded graph is the canonical lowering of the embedded program
+    source. A producer cannot substitute a graph from a different
+    program.
+  - When the verifier cannot import chimera, the graph-source link is
+    NOT RE-DERIVED: only internal consistency is checked (hashes,
+    dominance recomputed from the embedded graph), and a certificate
+    claiming "enforced" is never reported valid.
 """
 from __future__ import annotations
 

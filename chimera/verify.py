@@ -1,11 +1,12 @@
 """Independent, offline verifier for ChimeraLang certificates.
 
-This module is deliberately self-contained: it imports ONLY the Python
+This module is self-contained at import time: it imports ONLY the Python
 standard library (plus a lazy, feature-detected `cryptography` import inside
-the signature check). It does not import any part of the ChimeraLang
-execution path (vm/parser/lexer/detect/integrity/cir); all recomputation logic
-(canonical encoding, chain hashing, gate hashing, verdict, dominance) is
-re-derived here from the certificate alone. A test enforces this independence.
+the signature check). For v2 CIR certificates it *attempts* to import the
+chimera parser and lowering lazily, inside the verification function, to
+re-derive the graph from cir.program_source. If that import fails, the
+graph-source link is reported NOT RE-DERIVED and the guarantee degrades
+(see trust boundary below); the module never requires chimera at import.
 
 Two formats are understood, and anything else fails closed:
   - chimeralang-cert/v1: VM-path certificates (IntegrityReport).
@@ -13,13 +14,21 @@ Two formats are understood, and anything else fails closed:
     verifier recomputes the dominance predicate from the embedded graph
     structure and never trusts a stored dominance flag.
 
-Trust boundary for v2, stated plainly: the certificate proves the
-embedded program source is unmodified (program_hash), the embedded
-graph is unmodified (graph_hash), and the embedded graph satisfies
-(or does not satisfy) dominance as recomputed by this verifier. It
-does not prove that the embedded graph was produced by lowering the
-embedded source, because this offline verifier cannot re-run the
-lowering. The graph-to-source link is attested by the producer.
+Trust boundary for v2, stated exactly:
+  - When the chimera package is importable, the verifier re-lowers
+    cir.program_source with the real parser and lowering, and compares
+    the ID-insensitive canonical graph shape to the embedded graph. A
+    mismatch is a failure. The verifier then recomputes the dominance
+    predicate from the re-derived graph and requires the stored claim
+    to match. In this state the certificate proves: the source is
+    unmodified (program_hash), the graph is unmodified (graph_hash),
+    the graph is the canonical lowering of the source, and the
+    dominance claim is correct.
+  - When the chimera package cannot be imported, the graph-source link
+    is NOT RE-DERIVED: the verifier checks internal consistency only
+    (hashes, dominance recomputed from the embedded graph), reports
+    "graph-source link: NOT RE-DERIVED", and never reports valid for a
+    certificate whose stored dominance claim is "enforced".
 
 Guarantees, stated precisely:
   - certificate_hash binding = tamper-evidence. It binds every report field
@@ -59,6 +68,11 @@ class VerificationResult:
     checks_run: int = 0
     verdict_recomputed: str = ""
     signature_status: str = "absent"  # valid|invalid|absent|unavailable|unverified
+    # v2 graph-source link: "RE-DERIVED" when the embedded graph was
+    # shown to match a fresh lowering of cir.program_source,
+    # "NOT RE-DERIVED" when the chimera package could not be imported
+    # (v1 certificates report "N/A").
+    link_status: str = "N/A"
 
 
 class CertificateVerifier:
@@ -262,6 +276,92 @@ class CertificateVerifier:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _rederive_graph(source: str) -> tuple:
+        """Re-lower cir.program_source with the real parser and lowering.
+
+        Returns (graph_dict, error). graph_dict is the serialized
+        lowered graph, or None when the chimera package cannot be
+        imported or the source does not parse/lower. The import is
+        attempted lazily so this module stays usable (with a degraded
+        guarantee) where chimera is unavailable.
+        """
+        try:
+            from chimera.lexer import Lexer
+            from chimera.parser import Parser
+            from chimera.cir.lower import CIRLowering
+            from chimera.cir.certify import serialize_graph
+        except ImportError as e:
+            return None, f"chimera package not importable ({e})"
+        try:
+            program = Parser(Lexer(source).tokenize()).parse()
+        except Exception as e:
+            return None, f"program_source does not parse ({e})"
+        try:
+            graph = CIRLowering().lower(program)
+        except Exception as e:
+            return None, f"program_source does not lower ({e})"
+        return serialize_graph(graph), ""
+
+    @staticmethod
+    def _canonical_shape(graph_dict: dict) -> str:
+        """ID-insensitive canonical shape of a serialized graph.
+
+        Weisfeiler-Lehman label refinement over the DAG: each node's
+        label starts as its kind plus parameters (IDs excluded) and is
+        iteratively refined with its predecessors' and successors'
+        labels. The shape is the sorted multiset of node labels plus
+        the sorted multiset of (source label, target label, edge kind).
+        Two lowerings of the same source produce identical shapes
+        despite random node IDs; structurally different graphs differ.
+        """
+        nodes = graph_dict.get("nodes", []) or []
+        edges = graph_dict.get("edges", []) or []
+        ids = {n["id"] for n in nodes}
+        preds: dict[str, list[str]] = {nid: [] for nid in ids}
+        succs: dict[str, list[str]] = {nid: [] for nid in ids}
+        for e in edges:
+            s, t = e.get("source_id"), e.get("target_id")
+            if s in ids and t in ids:
+                succs[s].append(t)
+                preds[t].append(s)
+
+        def initial(n: dict) -> str:
+            # Exclude node-ID references (target_id, subgraph_entry,
+            # input_ids): they are random per lowering and redundant
+            # with the edge structure, which WL already captures.
+            params = {k: v for k, v in n.items()
+                      if k not in ("id", "target_id", "subgraph_entry",
+                                   "input_ids")}
+            return json.dumps(params, sort_keys=True, default=str)
+
+        labels = {n["id"]: initial(n) for n in nodes}
+        for _ in range(len(nodes) + 1):
+            refined = {}
+            for n in nodes:
+                nid = n["id"]
+                refined[nid] = (
+                    labels[nid]
+                    + "|P:" + ",".join(sorted(labels[p] for p in preds[nid]))
+                    + "|S:" + ",".join(sorted(labels[s] for s in succs[nid]))
+                )
+            if refined == labels:
+                break
+            labels = refined
+        node_ms = sorted(labels[n["id"]] for n in nodes)
+        edge_ms = sorted(
+            (labels[e["source_id"]], labels[e["target_id"]],
+             str(e.get("kind")))
+            for e in edges
+            if e.get("source_id") in labels and e.get("target_id") in labels
+        )
+        emit_ms = sorted(
+            labels[eid] for eid in (graph_dict.get("emit_ids", []) or [])
+            if eid in labels)
+        return json.dumps(
+            {"nodes": node_ms, "edges": edge_ms, "emit": emit_ms},
+            sort_keys=True)
+
+    @staticmethod
     def _recompute_dominance(graph: dict) -> tuple[bool, list[dict]]:
         """Independently recompute dominance from the embedded graph.
 
@@ -343,7 +443,8 @@ class CertificateVerifier:
         if not isinstance(cir, dict) or not isinstance(binding, dict):
             return VerificationResult(
                 valid=False, failures=failures, checks_run=checks_run,
-                verdict_recomputed="", signature_status=signature_status)
+                verdict_recomputed="", signature_status=signature_status,
+                link_status="N/A")
 
         cir_bytes = _canonical_bytes(cir)
 
@@ -386,6 +487,27 @@ class CertificateVerifier:
                 f"dominance: stored claim {stored_claim!r} does not match "
                 f"recomputed {expected_claim!r} (dominated={dominated})")
 
+        # --- Check 5b: graph-source link ----------------------------------
+        # Re-lower cir.program_source with the real parser and lowering
+        # and compare the canonical (ID-insensitive) graph shape to the
+        # embedded graph. This defeats a producer that splices in a
+        # graph from a different program and fixes up the hashes.
+        checks_run += 1
+        link_status = "RE-DERIVED"
+        rederived, re_err = CertificateVerifier._rederive_graph(source)
+        if rederived is None:
+            link_status = "NOT RE-DERIVED"
+            failures.append(f"graph-source link: NOT RE-DERIVED ({re_err})")
+            if stored_claim == "enforced":
+                failures.append(
+                    "graph-source link: NOT RE-DERIVED, so an 'enforced' "
+                    "claim can never be reported valid")
+        elif (CertificateVerifier._canonical_shape(rederived)
+                != CertificateVerifier._canonical_shape(graph)):
+            failures.append(
+                "graph-source link: re-derived graph does not match the "
+                "embedded graph (program_source and graph are inconsistent)")
+
         # --- Check 6: HMAC --------------------------------------------------
         if hmac_key is not None:
             checks_run += 1
@@ -419,6 +541,7 @@ class CertificateVerifier:
             checks_run=checks_run,
             verdict_recomputed="",
             signature_status=signature_status,
+            link_status=link_status,
         )
 
 

@@ -426,3 +426,148 @@ def test_verifier_rejects_forged_graph_source_mismatch():
         "verifier accepted a forged graph-source link")
     assert any("graph-source" in f.lower() or "re-deriv" in f.lower()
                for f in vr.failures), vr.failures
+
+
+def _dominance_verdicts(graph):
+    """Overall dominated verdict from all three implementations."""
+    from chimera.cir.nodes import EvolutionNode
+    from chimera.cir.certify import check_dominance, serialize_graph
+    from chimera.verify import CertificateVerifier
+
+    lowering = CIRLowering()
+    v_lower = True
+    for nid, node in graph.nodes.items():
+        if isinstance(node, EvolutionNode):
+            v_lower = v_lower and lowering._dominates(graph, nid)
+    for eid in graph.emit_ids:
+        if eid in graph.nodes:
+            v_lower = v_lower and lowering._dominates(graph, eid)
+
+    d = serialize_graph(graph)
+    v_certify = check_dominance(d)["dominated"]
+    v_verify, _ = CertificateVerifier._recompute_dominance(d)
+    return v_lower, v_certify, v_verify
+
+
+def _random_cir_program(rng):
+    """Seeded random CIR program for differential testing."""
+    parts = []
+    for i in range(rng.randint(1, 3)):
+        name = f"b{i}"
+        agents = [f"a{j}" for j in range(rng.randint(1, 3))]
+        parts.append(
+            f'belief {name} := inquire {{\n'
+            f'  prompt: "Q{i}?",\n'
+            f'  agents: [{", ".join(agents)}]\n}}')
+        ops = []
+        if len(agents) > 1 and rng.random() < 0.7:
+            ops.append(
+                f'resolve {name} with consensus {{ threshold: 0.8 }}')
+        # Randomize guard/resolve order to hit guard-before-resolve.
+        rng.shuffle(ops)
+        if rng.random() < 0.6:
+            strat = rng.choice(["mean", "both", "variance"])
+            ops.append(
+                f'guard {name} against hallucination '
+                f'{{ max_risk: 0.2, strategy: {strat} }}')
+        if rng.random() < 0.5:
+            ops.append(f'evolve {name} until stable {{ max_iter: 3 }}')
+        parts.extend(ops)
+        if rng.random() < 0.7:
+            parts.append(f'emit {name}')
+    return "\n\n".join(parts) + "\n"
+
+
+def test_dominance_implementations_agree():
+    """Differential test: the lowering, certify, and verifier dominance
+    implementations must agree on all examples, the fixture programs,
+    and 200 seeded random programs."""
+    import glob
+    import random
+
+    sources = []
+    for f in sorted(glob.glob("examples/*.chimera")):
+        sources.append((f, open(f, encoding="utf-8").read()))
+    for name, src in [
+        ("EMIT_NO_GUARD", EMIT_NO_GUARD),
+        ("EVOLVE_NO_GUARD", EVOLVE_NO_GUARD),
+        ("GUARD_AFTER_EVOLVE", GUARD_AFTER_EVOLVE),
+        ("FANOUT_RESOLVE_NO_GUARD", FANOUT_RESOLVE_NO_GUARD),
+        ("CANONICAL", CANONICAL),
+        ("SINGLE_GUARD_EMIT", SINGLE_GUARD_EMIT),
+        ("GUARD_BEFORE_RESOLVE", GUARD_BEFORE_RESOLVE),
+        ("DOUBLE_GUARD", DOUBLE_GUARD),
+    ]:
+        sources.append((f"fixture:{name}", src))
+    rng = random.Random(20261003)
+    for i in range(200):
+        sources.append((f"random:{i}", _random_cir_program(rng)))
+
+    n_checked = 0
+    for label, src in sources:
+        try:
+            prog = parse_src(src)
+        except Exception:
+            continue  # not a CIR program; skip
+        graph = CIRLowering().lower(prog)
+        # Only meaningful if the graph has effectful consumers.
+        from chimera.cir.nodes import EvolutionNode
+        has_effectful = any(
+            isinstance(n, EvolutionNode) for n in graph.nodes.values()
+        ) or bool(graph.emit_ids)
+        if not has_effectful:
+            continue
+        v_lower, v_certify, v_verify = _dominance_verdicts(graph)
+        assert (v_lower, v_certify, v_verify) == (v_lower, v_lower, v_lower), (
+            f"dominance implementations disagree on {label}: "
+            f"lower={v_lower} certify={v_certify} verify={v_verify}")
+        n_checked += 1
+    assert n_checked >= 150, f"too few programs checked: {n_checked}"
+
+
+def test_not_rederived_never_valid_with_enforced():
+    """When the chimera package cannot be imported, verification must
+    report 'graph-source link: NOT RE-DERIVED' and must never report
+    valid for a certificate claiming 'enforced'."""
+    import sys
+    from unittest import mock
+    from chimera.verify import CertificateVerifier
+
+    cert = _make_certed_run(strict_guard=True)
+    assert cert["cir"]["dominance"]["claim"] == "enforced"
+
+    blocked = {
+        "chimera.lexer": None,
+        "chimera.parser": None,
+        "chimera.cir.lower": None,
+        "chimera.cir.certify": None,
+    }
+    with mock.patch.dict(sys.modules, blocked):
+        vr = CertificateVerifier.verify(cert)
+    assert vr.link_status == "NOT RE-DERIVED", vr.link_status
+    assert any("NOT RE-DERIVED" in f for f in vr.failures), vr.failures
+    assert not vr.valid, "valid with 'enforced' while NOT RE-DERIVED"
+
+
+def test_not_rederived_non_enforced_still_checked():
+    """In NOT RE-DERIVED state the link failure is recorded even for
+    non-'enforced' claims (the implementation is stricter than the
+    minimum: any NOT RE-DERIVED v2 cert is invalid)."""
+    import sys
+    from unittest import mock
+    from chimera.verify import CertificateVerifier
+
+    cert = _make_certed_run(strict_guard=False)
+    assert cert["cir"]["dominance"]["claim"] == "non-blocking"
+
+    blocked = {
+        "chimera.lexer": None,
+        "chimera.parser": None,
+        "chimera.cir.lower": None,
+        "chimera.cir.certify": None,
+    }
+    with mock.patch.dict(sys.modules, blocked):
+        vr = CertificateVerifier.verify(cert)
+    assert vr.link_status == "NOT RE-DERIVED"
+    assert any("NOT RE-DERIVED" in f for f in vr.failures)
+    assert not vr.valid

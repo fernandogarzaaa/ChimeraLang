@@ -448,6 +448,7 @@ def cmd_verify(
         print("VERIFICATION FAILED ✗")
     print(f"  recomputed verdict: {result.verdict_recomputed}")
     print(f"  signature status:   {result.signature_status}")
+    print(f"  graph-source link:  {result.link_status}")
     print(f"  checks run:         {result.checks_run}")
     if result.failures:
         print("  failures:")

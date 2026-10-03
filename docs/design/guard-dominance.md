@@ -160,9 +160,17 @@ attestation is therefore new machinery, not an extension:
   fails. This mirrors how `verify.py` already recomputes chain hashes,
   gate hashes, and the verdict rather than trusting stored values.
 
-The verifier stays offline and self-contained (stdlib only), per the
-`verify.py` module contract; the dominance recomputation uses only
-the embedded structure, never the live engine.
+**Trust boundary, stated exactly.** The v2 verifier additionally
+re-lowers `cir.program_source` with the real parser and lowering and
+compares the ID-insensitive canonical graph shape
+(Weisfeiler-Lehman label refinement, `verify.py:_canonical_shape`)
+to the embedded graph; a mismatch is a failure, which defeats a
+producer that splices in a graph from a different program and fixes
+up the hashes. When the chimera package cannot be imported, the
+graph-source link is NOT RE-DERIVED: the verifier checks internal
+consistency only, reports the link status, and never reports valid
+for a certificate claiming `enforced`. `chimera verify` prints the
+link status (`RE-DERIVED` / `NOT RE-DERIVED` / `N/A` for v1).
 
 ## 4. Red tests
 
@@ -348,9 +356,19 @@ Verified during implementation:
   `examples/belief_reasoning.chimera` uses the CIR belief surface.
 - Certificate sizing: embedded graph section ~1.5KB (10 nodes),
   ~12KB (100 nodes), ~121KB (1000 nodes); dominance recompute
-  0.07ms/0.33ms/3.34ms. `verify.py` stays stdlib-only at top level.
+  0.07ms/0.33ms/3.34ms. `verify.py` stays stdlib-only at import time.
 - The lowering pass runs between `_pass_structural` and
   `_pass_dead_belief_elimination` (`lower.py`).
+- Graph-source forgery: a red test splices a dominated graph into an
+  unguarded program's certificate with all hashes fixed up; the
+  verifier rejected it only after re-derivation was added
+  (`test_verifier_rejects_forged_graph_source_mismatch`).
+- Differential test: lowering, certify, and verifier dominance
+  implementations agree on all examples, fixture programs, and 200
+  seeded random programs (196 with effectful consumers).
+- NOT RE-DERIVED path: simulated missing chimera import; link status
+  reported, `enforced` claim never valid
+  (`test_not_rederived_never_valid_with_enforced`).
 
 Not verified:
 - Any prior art beyond the three sources in section 7; all novelty
