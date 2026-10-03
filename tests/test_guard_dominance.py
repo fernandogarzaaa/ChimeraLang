@@ -593,3 +593,172 @@ def test_two_lowerings_produce_identical_graphs():
         b2 = _canonical_bytes(serialize_graph(g2))
         assert b1 == b2, (
             "two lowerings of the same source must be byte-identical")
+
+
+# ------------------------------------------------------------------
+# Source-level strict guard modifier (Option 2 from
+# docs/design/guard-dominance.md). Red tests: these FAIL until the
+# strict modifier is implemented end to end (EBNF, lexer/parser,
+# GuardStmt, ValidationNode.strict, lowering, executor, certificates,
+# verifier).
+# ------------------------------------------------------------------
+
+STRICT_CANONICAL = """belief x := inquire {
+  prompt: "Is the sky blue?",
+  agents: [claude]
+}
+
+resolve x with consensus { threshold: 0.8 }
+
+guard x against hallucination { max_risk: 0.2, strategy: both, strict: true }
+
+evolve x until stable { max_iter: 3 }
+
+emit x
+"""
+
+NONSTRICT_CANONICAL = """belief x := inquire {
+  prompt: "Is the sky blue?",
+  agents: [claude]
+}
+
+resolve x with consensus { threshold: 0.8 }
+
+guard x against hallucination { max_risk: 0.2, strategy: both }
+
+evolve x until stable { max_iter: 3 }
+
+emit x
+"""
+
+
+def _low_confidence_adapter(prompt, agents):
+    from chimera.cir.executor import InquiryResponse
+    return InquiryResponse(confidence=0.75, answer="maybe")
+
+
+def _high_confidence_adapter(prompt, agents):
+    from chimera.cir.executor import InquiryResponse
+    return InquiryResponse(confidence=0.95, answer="yes")
+
+
+def test_strict_modifier_parses_to_guard_stmt_and_validation_node():
+    """Red: the parser must accept `strict: true` on a guard and thread it
+    through GuardStmt into ValidationNode.strict."""
+    prog = parse_src(STRICT_CANONICAL)
+    guards = [s for s in prog.statements if type(s).__name__ == "GuardStmt"]
+    assert guards, "expected a GuardStmt in the parsed program"
+    assert guards[0].strict is True, "GuardStmt.strict must be True"
+
+    graph = CIRLowering().lower(prog)
+    from chimera.cir.nodes import ValidationNode
+    val_nodes = [n for n in graph.nodes.values()
+                 if isinstance(n, ValidationNode)]
+    assert val_nodes, "expected a ValidationNode in the lowered graph"
+    assert all(n.strict is True for n in val_nodes), \
+        "ValidationNode.strict must be True"
+
+    prog2 = parse_src(NONSTRICT_CANONICAL)
+    guards2 = [s for s in prog2.statements if type(s).__name__ == "GuardStmt"]
+    assert guards2[0].strict is False, \
+        "GuardStmt.strict must default to False"
+
+
+def test_failing_strict_guard_halts_like_global_strict():
+    """Red (a): a failing source-level strict guard prevents the dominated
+    emit and evolve from executing, exactly like the global strict_guard
+    flag does today, even when the global flag is off."""
+    from chimera.cir import run_cir
+    from chimera.cir.executor import GuardViolation
+
+    prog = parse_src(STRICT_CANONICAL)
+    with pytest.raises(GuardViolation):
+        run_cir(prog, strict_guard=False,
+                inquiry_adapter=_low_confidence_adapter)
+
+    # Sanity: today's global-flag behavior still raises on a non-strict guard.
+    prog2 = parse_src(NONSTRICT_CANONICAL)
+    with pytest.raises(GuardViolation):
+        run_cir(prog2, strict_guard=True,
+                inquiry_adapter=_low_confidence_adapter)
+
+    # And a non-strict guard with the global flag off still does not raise.
+    prog3 = parse_src(NONSTRICT_CANONICAL)
+    result = run_cir(prog3, strict_guard=False,
+                     inquiry_adapter=_low_confidence_adapter)
+    assert result.guard_violations, "expected recorded (non-fatal) violations"
+
+
+def test_dominance_claim_enforced_only_when_all_dominating_guards_strict():
+    """Red (b): the claim is 'enforced' only when every guard on every
+    dominating path to each effectful node is source-level strict;
+    otherwise 'non-blocking' (dominated) or 'absent' (not dominated)."""
+    from chimera.cir import run_cir
+    from chimera.cir.certify import certify_cir
+
+    prog = parse_src(STRICT_CANONICAL)
+    result = run_cir(prog, inquiry_adapter=_high_confidence_adapter)
+    graph = CIRLowering().lower(prog)
+    cert = certify_cir(STRICT_CANONICAL, graph, result, strict_guard=False)
+    assert cert["cir"]["dominance"]["claim"] == "enforced", \
+        "all dominating guards strict -> enforced"
+
+    prog2 = parse_src(NONSTRICT_CANONICAL)
+    result2 = run_cir(prog2, inquiry_adapter=_high_confidence_adapter)
+    graph2 = CIRLowering().lower(prog2)
+    cert2 = certify_cir(NONSTRICT_CANONICAL, graph2, result2,
+                        strict_guard=False)
+    assert cert2["cir"]["dominance"]["claim"] == "non-blocking", \
+        "dominated but non-strict guard -> non-blocking, not enforced"
+
+    prog3 = parse_src(EMIT_NO_GUARD)
+    result3 = run_cir(prog3, inquiry_adapter=_high_confidence_adapter)
+    graph3 = CIRLowering().lower(prog3)
+    cert3 = certify_cir(EMIT_NO_GUARD, graph3, result3, strict_guard=False)
+    assert cert3["cir"]["dominance"]["claim"] == "absent", \
+        "undominated consumer -> absent"
+
+
+def test_verifier_derives_claim_from_graph_ignoring_cir_strict_guard():
+    """Red (c): the verifier derives the dominance claim from the
+    re-lowered graph alone. Flipping cir.strict_guard on a non-strict
+    source must not change the expected claim."""
+    import copy
+    import hashlib
+    from chimera.cir import run_cir
+    from chimera.cir.certify import certify_cir
+    from chimera.verify import CertificateVerifier, _canonical_bytes
+
+    prog = parse_src(NONSTRICT_CANONICAL)
+    result = run_cir(prog, inquiry_adapter=_high_confidence_adapter)
+    graph = CIRLowering().lower(prog)
+    cert = certify_cir(NONSTRICT_CANONICAL, graph, result, strict_guard=False)
+    assert cert["cir"]["dominance"]["claim"] == "non-blocking"
+
+    tampered = copy.deepcopy(cert)
+    tampered["cir"]["strict_guard"] = True
+    cir_bytes = _canonical_bytes(tampered["cir"])
+    tampered["binding"]["certificate_hash"] = hashlib.sha256(
+        cir_bytes).hexdigest()
+
+    res = CertificateVerifier().verify(tampered)
+    assert res.valid, (
+        "verifier must ignore cir.strict_guard and still accept the "
+        f"non-blocking claim; failures: {res.failures}")
+    assert tampered["cir"]["dominance"]["claim"] == "non-blocking"
+
+
+def test_strict_guard_flag_cannot_force_enforced_claim():
+    """Red (d): a certificate with strict_guard set but a non-strict source
+    cannot claim 'enforced'; the producer must derive the claim from the
+    source-level strict flags."""
+    from chimera.cir import run_cir
+    from chimera.cir.certify import certify_cir
+
+    prog = parse_src(NONSTRICT_CANONICAL)
+    result = run_cir(prog, inquiry_adapter=_high_confidence_adapter)
+    graph = CIRLowering().lower(prog)
+    cert = certify_cir(NONSTRICT_CANONICAL, graph, result, strict_guard=True)
+    assert cert["cir"]["dominance"]["claim"] != "enforced", \
+        "strict_guard=True with a non-strict source must not claim enforced"
+    assert cert["cir"]["dominance"]["claim"] == "non-blocking"
