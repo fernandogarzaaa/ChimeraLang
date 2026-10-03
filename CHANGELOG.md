@@ -26,6 +26,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Pooling algebra no longer saturates.** `BetaDist.combine_pseudocount`
+  (and its alias `combine_ds`) now adds evidence counts directly,
+  `(alpha + alpha', beta + beta')`, with the K conflict check retained.
+  The old rule `(alpha + alpha' - 1, beta + beta' - 1)` with its
+  `max(., 1e-6)` clamp drove the raw beta to zero and negative for
+  agreeing high-confidence sources, so the pooled mean saturated at
+  exactly 1.0 (e.g. five 0.95 sources at strength 10). The new rule
+  cannot clamp: parameters are sums of strictly positive
+  pseudocounts. Behavior change: pooled means are now strength-weighted
+  averages of the input means (exactly the arithmetic mean for equal
+  strengths); `Beta(8,2) + Beta(8,2)` now pools to `Beta(16,4)` with
+  mean 0.8 instead of `Beta(15,3)` with mean 0.8333. Downstream
+  thresholds on combined means fire differently (less extreme).
+  `_exec_inquiry`'s seeded-prior path used the same old formula inline;
+  it now uses `combine_pseudocount`, and a conflicting seeded prior is
+  recorded as a guard violation instead of being silently merged.
+
 - **Evolve after resolve/guard now re-inquires.** `_exec_evolution` walked only a
   `subgraph_entry` that had to be an `InquiryNode`, so `evolve` after `resolve`
   or `guard` silently ran zero adapter calls and never converged. It now walks

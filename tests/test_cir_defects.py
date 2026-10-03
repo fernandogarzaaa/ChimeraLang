@@ -165,15 +165,21 @@ class TestResolveTraceHonesty:
         assert not any("[consensus] combined mean" in t for t in result.trace)
 
     def test_combine_pseudocount_characterization(self):
-        # Pins the actual arithmetic: pseudocount addition, not a weighted
-        # average. Beta(8,2) + Beta(8,2) -> Beta(15,3), mean 15/18.
+        # Pins the actual arithmetic: pure pseudocount addition.
+        # Beta(8,2) + Beta(8,2) -> Beta(16,4), mean 16/20 = 0.8.
+        # Deliberately changed from the old Beta(15,3) / 15/18: the old
+        # rule subtracted one pseudocount per combination
+        # (alpha + alpha' - 1), which is what drove raw parameters to
+        # zero and negative for agreeing high-confidence sources. The
+        # new rule adds evidence counts without the subtract-one, so
+        # two identical sources pool to exactly their shared mean.
         combined = BetaDist(8.0, 2.0).combine_pseudocount(BetaDist(8.0, 2.0))
-        assert (combined.alpha, combined.beta) == (15.0, 3.0)
-        assert combined.mean == pytest.approx(0.8333, abs=1e-4)
+        assert (combined.alpha, combined.beta) == (16.0, 4.0)
+        assert combined.mean == pytest.approx(0.8, abs=1e-9)
 
     def test_combine_ds_alias_still_works(self):
         combined = BetaDist(8.0, 2.0).combine_ds(BetaDist(8.0, 2.0))
-        assert combined.mean == pytest.approx(0.8333, abs=1e-4)
+        assert combined.mean == pytest.approx(0.8, abs=1e-9)
 
 
 # ---------------------------------------------------------------------------

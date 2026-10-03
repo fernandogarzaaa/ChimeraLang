@@ -253,10 +253,17 @@ class CIRExecutor:
             prior = bs.distribution
             bs.observed = observed
             if abs(prior.alpha - 1.0) > 1e-9 or abs(prior.beta - 1.0) > 1e-9:
-                posterior = BetaDist(
-                    alpha=max(prior.alpha + observed.alpha - 1.0, 1e-6),
-                    beta=max(prior.beta + observed.beta - 1.0, 1e-6),
-                )
+                # Seeded prior: combine with the fresh observation using
+                # the same pseudocount algebra as consensus (pure
+                # addition, K conflict check, no subtract-one, no clamp).
+                # A conflicting seeded prior is a guard violation, not a
+                # silent merge; the prior is left in place.
+                try:
+                    posterior = prior.combine_pseudocount(observed)
+                except ValueError as e:
+                    result.trace.append(f"[inquiry] seeded prior conflict: {e}")
+                    result.guard_violations.append(f"inquiry prior conflict: {e}")
+                    return
                 result.trace.append(
                     f"[inquiry] seeded prior combined -> "
                     f"Beta({posterior.alpha:.1f},{posterior.beta:.1f})"

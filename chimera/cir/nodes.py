@@ -54,11 +54,30 @@ class BetaDist:
 
         This is NOT Dempster-Shafer combination in the formal sense. It
         adds the two distributions' pseudocounts
-        (alpha + alpha' - 1, beta + beta' - 1) after a Dempster-style
+        (alpha + alpha', beta + beta') after a Dempster-style
         conflict check. The conflict coefficient
         K = m1_yes*m2_no + m1_no*m2_yes measures how irreconcilable the
         sources are; when K exceeds ``conflict_threshold`` a ValueError
         is raised rather than silently producing a merged belief.
+
+        There is deliberately no subtract-one and no max(., 1e-6)
+        clamp: every BetaDist in the system has strictly positive
+        parameters (``from_confidence`` clips to (1e-6, 1-1e-6) times
+        a positive strength; ``uniform()`` is (1, 1)), and sums of
+        positives are positive, so the raw parameters can never be
+        negative and no clamp path is reachable. The pooled mean is a
+        strength-weighted average of the input means (exactly the
+        arithmetic mean for equal strengths); k identical sources at
+        confidence c < 1 pool to exactly c, never 1.0. The operation
+        is commutative and associative.
+
+        Behavior change: previously
+        (alpha + alpha' - 1, beta + beta' - 1) with a 1e-6 clamp. That
+        rule drove the raw beta to zero and then negative for
+        agreeing high-confidence sources (e.g. five 0.95 sources at
+        strength 10: 0.5 + 0.5 - 1.0 = 0.0, then -0.5 three times),
+        and the clamp hid it, so the pooled mean saturated at exactly
+        1.0. See experiments/h1_pooling/runs/2026-10-02-nebius/ERRATUM.md.
         """
         total1 = self.alpha + self.beta
         total2 = other.alpha + other.beta
@@ -74,9 +93,7 @@ class BetaDist:
                 f"Sources irreconcilable: mean1={self.mean:.3f}, mean2={other.mean:.3f}"
             )
 
-        new_alpha = self.alpha + other.alpha - 1.0
-        new_beta = self.beta + other.beta - 1.0
-        return BetaDist(alpha=max(new_alpha, 1e-6), beta=max(new_beta, 1e-6))
+        return BetaDist(alpha=self.alpha + other.alpha, beta=self.beta + other.beta)
 
     def combine_ds(
         self, other: BetaDist, conflict_threshold: float = 0.8

@@ -270,6 +270,14 @@ class CIRLowering:
                     # default strength of 10, which caps variance at about
                     # 0.0227 (more evidence only lowers it). A limit above
                     # that cap can never fire, so the variance check is dead.
+                    # Re-checked 2026-10-03 against the new pooling algebra
+                    # (pure pseudocount addition): combined beliefs now
+                    # carry the full sum of the input strengths, where the
+                    # old rule subtracted 2 per combination and could clamp
+                    # a parameter to ~1e-6, producing spuriously large
+                    # variance. Combined beliefs therefore sit even further
+                    # below this cap than before, and the cap itself is
+                    # unchanged because from_confidence is unchanged.
                     cap = BetaDist.max_variance_for_strength(10.0)
                     if limit > cap:
                         target_name = self._belief_name_for(graph, nid)
