@@ -208,15 +208,30 @@ class TestLogisticCalibrator:
     def test_json_roundtrip_carries_metadata(self):
         from chimera.cir.calibration import LogisticCalibrator
         scores, outcomes = _fit_data()
-        cal = LogisticCalibrator.fit(scores, outcomes, dataset_hash="deadbeef")
+        cal = LogisticCalibrator.fit(
+            scores, outcomes, dataset_hash="deadbeef",
+            metadata={"n_sources": 3, "source_type": "cross-model"})
         d = json.loads(cal.to_json())
         assert d["n"] == 60
         assert d["dataset_hash"] == "deadbeef"
         assert "fit_date" in d and d["fit_date"]
+        assert d["metadata"] == {"n_sources": 3,
+                                 "source_type": "cross-model"}
         cal2 = LogisticCalibrator.from_json(cal.to_json())
         assert (cal2.a, cal2.b, cal2.n, cal2.dataset_hash) == \
             (cal.a, cal.b, cal.n, cal.dataset_hash)
+        assert cal2.metadata == {"n_sources": 3,
+                                 "source_type": "cross-model"}
         assert cal2.predict(0.7) == pytest.approx(cal.predict(0.7))
+
+    def test_from_json_without_metadata_still_loads(self):
+        from chimera.cir.calibration import LogisticCalibrator
+        old = json.dumps({"a": 1.0, "b": -0.5, "n": 60,
+                          "dataset_hash": "abc", "fit_date": "2026-10-03"})
+        cal = LogisticCalibrator.from_json(old)
+        assert cal.metadata == {}
+        import math
+        assert cal.predict(0.7) == pytest.approx(1.0 / (1.0 + math.exp(-0.2)))
 
     def test_dataset_hash_defaults_to_data_hash(self):
         from chimera.cir.calibration import LogisticCalibrator

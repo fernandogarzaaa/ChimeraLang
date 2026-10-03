@@ -20,7 +20,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 
 #: Minimum training points for a logistic fit. Below this the two
@@ -44,12 +44,19 @@ def _sigmoid(z: float) -> float:
 
 @dataclass
 class LogisticCalibrator:
-    """Two-parameter logistic map from uncalibrated score to probability."""
+    """Two-parameter logistic map from uncalibrated score to probability.
+
+    ``metadata`` carries free-form provenance about the training setup
+    (for example the source configuration the calibrator was fit for).
+    It is recorded in the JSON and round-trips through from_json, but
+    never affects predict().
+    """
     a: float
     b: float
     n: int
     dataset_hash: str
     fit_date: str
+    metadata: dict = field(default_factory=dict)
 
     @classmethod
     def fit(
@@ -57,13 +64,15 @@ class LogisticCalibrator:
         scores: list[float],
         outcomes: list[int],
         dataset_hash: str | None = None,
+        metadata: dict | None = None,
     ) -> "LogisticCalibrator":
         """Fit a and b on (score, 0/1 outcome) pairs, deterministically.
 
         Raises ValueError when fewer than MIN_FIT_N points are given.
         When dataset_hash is omitted it is computed as the SHA-256 of
         the training pairs, so the calibrator records exactly what it
-        was fit on.
+        was fit on. ``metadata`` (for example {"n_sources": 3,
+        "source_type": "cross-model"}) is stored verbatim in the JSON.
         """
         scores = [float(s) for s in scores]
         outcomes = [int(o) for o in outcomes]
@@ -113,7 +122,8 @@ class LogisticCalibrator:
             b -= (h_aa * g_b - h_ab * g_a) / det
 
         return cls(a=a, b=b, n=n, dataset_hash=dataset_hash,
-                   fit_date=date.today().isoformat())
+                   fit_date=date.today().isoformat(),
+                   metadata=dict(metadata) if metadata else {})
 
     def predict(self, score: float) -> float:
         """Map an uncalibrated score in [0, 1] to a calibrated probability."""
@@ -126,11 +136,15 @@ class LogisticCalibrator:
             "n": self.n,
             "dataset_hash": self.dataset_hash,
             "fit_date": self.fit_date,
+            "metadata": self.metadata,
         }, sort_keys=True)
 
     @classmethod
     def from_json(cls, text: str) -> "LogisticCalibrator":
         d = json.loads(text)
+        # metadata is optional: calibrators written before it existed
+        # still load.
         return cls(a=float(d["a"]), b=float(d["b"]), n=int(d["n"]),
                    dataset_hash=str(d["dataset_hash"]),
-                   fit_date=str(d["fit_date"]))
+                   fit_date=str(d["fit_date"]),
+                   metadata=dict(d.get("metadata") or {}))
