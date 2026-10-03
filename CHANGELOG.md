@@ -43,6 +43,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   re-lowered graph alone and ignores `cir.strict_guard`.
   `examples/strict_guarded_pipeline.chimera` verifies as `enforced`
   via `chimera verify`.
+- **Deterministic node ids and exact graph re-derivation.** `CIRLowering`
+  assigns node ids in creation order (`n0000`, `n0001`, ...), so two
+  lowerings of the same source serialize byte-for-byte identically.
+  The verifier re-lowers `cir.program_source` with the real parser and
+  lowering and compares the canonical serialized graph bytes exactly.
+  This defeats splice-forgery attacks where a producer pairs an
+  unguarded source with a guarded graph and fixes up the hashes.
+- **Guard strength and vacuous guard detection.** The `enforced` claim
+  is structural only. A new `is_vacuous_guard()` predicate (with
+  derivation in code comments) identifies guards that can never fail:
+  `max_risk >= 1.0`, or explicit `max_variance` at or above
+  `BetaDist.max_variance_for_strength`. Lowering warns on vacuous
+  guards; `--require-dominance` raises `LoweringError` for a vacuous
+  dominating guard. The certificate's `dominance.guards` list details
+  each dominating guard (strategy, thresholds, strict, `score_source`,
+  `vacuous` flag), and `dominance.guard_strength` is `vacuous`,
+  `uncalibrated`, or `nonvacuous` (worst case). The verifier
+  recomputes the guard list from the re-derived graph and rejects
+  tampering.
+- **New verify warnings.** `chimera verify` prints a WARNING line when
+  any dominating guard is vacuous ("can never fail; the 'enforced'
+  claim is structural only") or uncalibrated ("thresholds are on
+  uncalibrated posterior means"). No warning when all guards are
+  non-vacuous and calibrated.
+
+### Changed
+
+- **Public behavior changes.** `strict` is now part of the guard
+  syntax (`guard x against hallucination { ..., strict: true }`). The
+  dominance claim ignores the `--strict-guard` run flag; it is derived
+  solely from source-level strict flags. The `dominance` certificate
+  section now includes `guards` and `guard_strength` fields.
 
 - **Agreement resolve strategy with opt-in calibration.** `resolve` now
   accepts `strategy: agreement` (the default when a belief has more

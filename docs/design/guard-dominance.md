@@ -393,14 +393,68 @@ URLs. Every novelty claim below is marked **unverified**.
    entry and in the certificate.
 3. CHOSEN: guard-before-resolve is not accepted as dominating the
    consensus. Documented as intentional conservatism.
-4. CHOSEN: `strict_guard` is recorded in the certificate. The claim is
-   `enforced` only when dominance holds AND `strict_guard` was on;
-   otherwise `non-blocking` (dominated) or `absent` (undominated).
+4. CHOSEN (superseded by Option 2): `strict_guard` was recorded in the
+   certificate, and the claim was `enforced` only when dominance held
+   AND `strict_guard` was on. **Option 2 is now implemented:** the
+   claim is `enforced` only when every guard on every dominating path
+   is source-level `strict: true`. The run flag is recorded for
+   information only and ignored by the verifier.
 5. CHOSEN: new `chimeralang-cert/v2` envelope with a `cir` section.
    `verify.py` fails closed on unknown versions and verifies v1
    unchanged.
 6. CHOSEN: effectful nodes are `EvolutionNode` and `emit`
    (`InquiryNode` is a source, so the requirement is vacuous for it).
+7. CHOSEN: guard strength. The `enforced` claim is structural only.
+   Vacuous guards (those that can never fail) are detected via
+   `is_vacuous_guard()`; lowering warns, `--require-dominance` raises
+   `LoweringError`. The certificate lists each dominating guard with
+   its `vacuous` flag, and `guard_strength` is `vacuous`,
+   `uncalibrated`, or `nonvacuous` (worst case). The verifier
+   recomputes the list and rejects tampering.
+
+### Vacuous guard definition
+
+A guard is vacuous iff none of its active checks can fail:
+
+- Mean check (`strategy` "mean" or "both"): violation if
+  `score < 1.0 - max_risk`. Scores are Beta means in (0, 1]. If
+  `max_risk >= 1.0`, the threshold is <= 0, which no score can fall
+  below.
+- Variance check (`strategy` "variance" or "both"): violation if
+  `variance > max_variance`. Inquiry-produced beliefs have variance <=
+  `BetaDist.max_variance_for_strength(10.0)` ≈ 0.0227. An explicit
+  `max_variance` at or above this cap can never fire.
+
+### False-confidence falsifier
+
+**Claim:** A strict guard with `max_risk: 1.0` yields "enforced" but
+can never fail.
+
+**Reproduction:**
+```
+belief x := inquire { prompt: "Is the sky blue?", agents: [claude] }
+resolve x with consensus { threshold: 0.8 }
+guard x against hallucination { max_risk: 1.0, strategy: mean, strict: true }
+emit x
+```
+Lowering warns: "guard on 'x' is vacuous: it can never fail".
+The certificate claims "enforced" (structural dominance holds) but
+`guard_strength` is "vacuous" and `chimera verify` prints:
+"WARNING: 1 dominating guard(s) are vacuous (can never fail); the
+'enforced' claim is structural only."
+
+### Explicit non-claims
+
+The "enforced" claim does NOT mean:
+- The guards are meaningful (a vacuous guard still yields "enforced")
+- The guards are calibrated (uncalibrated posterior means have
+  AUROC 0.67-0.75, not perfect)
+- A particular run was honest
+- The beliefs were well-formed
+- Any specific model produced the beliefs
+
+It means: the source has the structural property that every
+effectful node is dominated by source-level strict guards.
 
 ## What was verified, and what was not
 

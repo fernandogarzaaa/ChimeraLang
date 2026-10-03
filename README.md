@@ -148,6 +148,34 @@ part of the program source and therefore determines the certificate
 claim. See `docs/design/guard-dominance.md` and
 `examples/strict_guarded_pipeline.chimera`.
 
+#### What the dominance claim means
+
+"Enforced" means every guard on every belief-flow path to each
+effectful node is source-level strict. This is structural dominance:
+a property of the program source, verified by re-lowering the source
+and checking the graph.
+
+It does not mean the guards are meaningful or calibrated. A guard with
+`max_risk: 1.0` can never fail (it requires score >= 0) yet still
+yields "enforced". The certificate's `dominance.guard_strength` field
+reports the worst case over dominating guards: `vacuous` (can never
+fail), `uncalibrated` (uses raw posterior means), or `nonvacuous`
+(meaningful thresholds on calibrated scores). `chimera verify` prints
+a WARNING when any dominating guard is vacuous or uncalibrated.
+
+The H1 confirmatory experiment (4,000 calls, zero parse failures)
+found: verbalized-confidence AUROC 0.51 to 0.54 in Mode B (near
+chance); agreement AUROC 0.6714 (95% CI [0.6280, 0.7185]) in Mode A
+and 0.7519 (95% CI [0.7121, 0.7908]) in Mode B on fresh questions; the
+calibration result was Inconclusive under the frozen rules. A threshold
+on an uncalibrated posterior mean is not a guarantee.
+
+Trust boundary: the certificate proves a source has this structural
+property. It does not prove that a particular run was honest, that the
+beliefs were well-formed, or which model produced them. The
+`score_source` field (`calibrated`/`uncalibrated`) is a run-time
+observation, not a structural guarantee.
+
 ### Saving and reusing symbols
 
 ```bash
