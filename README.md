@@ -11,7 +11,7 @@ ChimeraLang treats uncertainty, confidence, and epistemic state as **first-class
 | Feature | Description |
 |---|---|
 | **CIR — Cognitive Intermediate Representation** | A graph-based IR where beliefs flow as Beta distributions through Inquiry → Consensus → Validation → Evolution nodes |
-| **Belief System** | `belief`/`inquire`/`resolve`/`guard`/`evolve` — first-class epistemic constructs backed by pseudocount-addition evidence combination with a conflict check |
+| **Belief System** | `belief`/`inquire`/`resolve`/`guard`/`evolve` — first-class epistemic constructs; `resolve` defaults to answer-agreement voting, with pseudocount-addition evidence combination (`pooled`) and opt-in logistic calibration |
 | **Probabilistic Types** | `Confident<T>`, `Explore<T>`, `Converge<T>`, `Provisional<T>` — types that carry confidence scores |
 | **Ensemble Consensus Gates** | N branches run with Gaussian-perturbed confidences and collapse by confidence-weighted vote |
 | **Symbol Emergence** | Reusable CIR subgraphs discovered automatically via Weisfeiler-Lehman hashing + TF-IDF similarity, evolved by Darwinian fitness competition |
@@ -80,7 +80,7 @@ belief cause := inquire {
   ttl: 3600
 }
 
-resolve cause with consensus { threshold: 0.8, strategy: dempster_shafer }
+resolve cause with consensus { threshold: 0.75 }
 guard cause against hallucination { max_risk: 0.2, strategy: both }
 evolve cause until stable { max_iter: 3 }
 
@@ -100,7 +100,7 @@ python -m chimera.cli run examples/belief_reasoning.chimera --trace
   [inquiry] prompt='What are the primary causes...' agents=['claude']
   [inquiry] confidence=0.750 -> Beta(7.5,2.5)
   [inquiry] answer recorded (72 chars)
-  [consensus] strategy=dempster_shafer threshold=0.75
+  [consensus] strategy=agreement threshold=0.75
   [consensus] single source, no combination performed
   [guard] max_risk=0.25 strategy=both
   [guard] PASSED — mean=0.750 variance=0.0170
@@ -154,7 +154,38 @@ Beliefs are **Beta distributions** `Beta(α, β)` — not scalar floats. This me
 
 ### Evidence combination (`resolve`)
 
-`resolve` pools beliefs by pseudocount addition — `alpha + alpha' - 1`, `beta + beta' - 1` — after a Dempster-style conflict check. When the conflict coefficient K exceeds the threshold, a conflict error is raised rather than silently merging. This is not formal Dempster-Shafer combination; the `dempster_shafer` strategy label is kept for language compatibility and `BetaDist.combine_ds` remains as a backward-compatible alias for `combine_pseudocount`.
+`resolve` accepts three strategies. `agreement` (the default when a
+belief has more than one source with answers) is vote-share over
+normalized answers: the winner is the most common normalized answer,
+ties broken by earliest source in agent order. The resolved belief
+carries raw agreement (votes/N), a Laplace-smoothed Beta posterior
+(unanimous 3/3 gives Beta(4,1), mean 0.8, never 1.0), and the winning
+answer text. `pooled` chains `BetaDist.combine_pseudocount`: pure
+pseudocount addition (`alpha + alpha'`, `beta + beta'`) after a
+Dempster-style conflict check; when the conflict coefficient K exceeds
+the threshold, a conflict error is raised rather than silently merging.
+`dempster_shafer` is accepted as an alias of `pooled` with a lowering
+warning. This was never formal Dempster-Shafer combination, and
+`BetaDist.combine_ds` remains as a backward-compatible alias for
+`combine_pseudocount`.
+
+Why agreement is the default: the H1 experiment
+(`experiments/h1_pooling`) found verbalized confidence near chance
+(mode-B AUROC 0.51 to 0.54) while answer agreement carried the signal,
+so multi-source beliefs with answers resolve by vote share unless
+`strategy: pooled` is given explicitly. Single-source resolve passes
+through unchanged whatever the strategy.
+
+**Opt-in calibration.** A resolved belief's score is uncalibrated by
+default (lowering warns loudly). `chimera/cir/calibration.py` provides
+`LogisticCalibrator`, a deterministic pure-Python logistic fit of
+calibrated probability against the uncalibrated score; pass it as
+`run_cir(..., calibrator=...)` or `--calibrator=cal.json` on the CLI
+and resolved beliefs carry `calibrated_p`, which guard and emit use in
+place of the posterior mean. Calibration is only meaningful with a
+held-out calibration set: fitting and evaluating on the same questions
+gives an optimistic calibrator, and `fit` refuses fewer than
+`MIN_FIT_N = 30` points.
 
 **Multi-agent fan-out.** A belief with `agents: [a, b]` lowers to one `InquiryNode` per agent, so `resolve` now causes N adapter calls (one per agent) instead of one. Each agent's belief is tracked separately as `x@a`, `x@b` and pooled by the chain above. Different agents are *less correlated*, not independent: models share training data, so pooling still overstates the evidence somewhat, just less than repeated calls to one model. The default Anthropic adapter maps agent names to model ids through an explicit dict (`CIRExecutor(agent_models={...})`, default `{"claude": "claude-sonnet-4-6"}`) and raises a clear error naming any unknown agent rather than silently falling back to one model.
 

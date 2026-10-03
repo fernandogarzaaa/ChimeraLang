@@ -1,6 +1,78 @@
 # Pooling redesign: options for the `combine_pseudocount` saturation defect
 
-Status: investigation only. No fix implemented. Awaiting Inan's choice.
+Status: DECIDED 2026-10-03. Inan chose option (c): fix the algebra (a),
+add agreement-based resolve (b), with opt-in calibration. Implemented
+on `feat/cir-agreement-resolve` (Stages 1-4), docs in Stage 5.
+
+## The defect
+
+`BetaDist.combine_pseudocount` (`chimera/cir/nodes.py:50`) merged two
+beliefs as `(alpha + alpha' - 1, beta + beta' - 1)` and clamped each at
+`1e-6`. Whenever `k` sources at confidence `c` and strength `s`
+satisfy `k * (1 - c) * s < (k - 1)`, the raw beta goes to zero or
+negative and the clamp pins it, so the pooled mean saturates at 1.0.
+Example, all at the shipped default strength 10
+(`chimera/cir/nodes.py:41`, used by `_exec_inquiry` at
+`chimera/cir/executor.py:240`): five sources at 0.95 give raw betas
+0.0, -0.5, -0.5, -0.5 and a pooled `Beta(43.5, 1e-6)` with mean
+0.999999977. The H1 experiment measured the consequence on real
+model outputs: on the accepted set (pooled mean >= 0.80) the chain
+claims 1.0000 with 0.3308 precision (mode B, N=500 SimpleQA), and
+loses to a plain mean on Brier in both modes.
+
+Red test: `tests/test_cir_nodes.py::TestBetaDist::test_combine_pseudocount_no_saturation_clamp`
+(now passing).
+
+## As built (option (c), chosen)
+
+(a) The belief algebra is pure pseudocount addition:
+`combine(a, b) = Beta(a.alpha + b.alpha, a.beta + b.beta)` after the
+retained K conflict check. No subtract-one, no clamp. Deviation from
+the note's literal `Beta(1 + sum alpha, 1 + sum beta)`: no `Beta(1,1)`
+prior is added per combination, because it would accumulate `k - 1`
+spurious priors over `k` chained sources and break the property the
+task's Stage 4 verifies (pooled mean equals the arithmetic mean for
+equal strengths; confirmed through `run_cir` within 6.67e-07, the
+residual being the documented `1e-6` clip in `from_confidence` on
+`1.0` inputs). Positivity, and hence clamp-unreachability, holds
+without the `+1`: every `BetaDist` in the system has strictly positive
+parameters and sums of positives are positive. The pooled mean is a
+strength-weighted average of the input means, so it lies within
+`[min, max]` of them; `k` identical sources at `c < 1` pool to exactly
+`c`. `combine_ds` stays as an alias. The same old formula existed
+inline in `_exec_inquiry` for seeded priors; it now delegates to
+`combine_pseudocount`, and a conflicting seeded prior is a guard
+violation, not a silent merge.
+
+(b) `resolve` gained the `agreement` strategy (now the default when a
+belief has more than one source with answers): vote-share over
+normalized answers (`chimera/cir/agreement.py`), same normalization as
+the H1 experiment, winner is the most common normalized answer with
+ties broken by earliest source in agent order, comparator and
+normalizer pluggable. Deviation from the note's sketch: the posterior
+is Laplace-smoothed `Beta(1 + votes, 1 + (n - votes))` rather than a
+fixed strength-10 Beta, so unanimous 3/3 yields mean 0.8, never 1.0.
+Replay validation against the H1 data (first 100 mode-A questions
+through `run_cir`): engine agreement matches the experiment V arm
+100/100, engine winner matches 100/100, zero mismatches
+(`experiments/h1_pooling/validate_agreement_replay.py`). `pooled`
+keeps the (a) algebra; `dempster_shafer` is an alias of `pooled` with
+a lowering warning. Single-source resolve passes through unchanged.
+
+Calibration is opt-in (`chimera/cir/calibration.py`:
+`LogisticCalibrator`, deterministic pure-Python fit, JSON carrying n,
+dataset hash, fit date, refuses n < `MIN_FIT_N = 30`). `run_cir`
+accepts `calibrator=...`; the CLI accepts `--calibrator=PATH`.
+`calibrated_p` appears only when a calibrator is supplied; guard and
+emit use it when present, else the uncalibrated posterior with a
+lowering warning.
+
+What the H1 data actually says, stated plainly: verbalized confidence
+was near chance in mode B (AUROC 0.51 to 0.54); answer agreement
+carried the signal. Calibration is opt-in and only meaningful with a
+held-out calibration set: it rescales scores, it does not create
+ranking signal (the H1 v2 finding was Platt restoring ECE to ~0.04
+with mode-B AUROC still ~0.51).
 
 ## The defect
 
@@ -88,3 +160,10 @@ Option (c) keeps the algebra sound, adopts the empirically best
 pooling, and makes calibration explicit rather than magical. But it
 is the largest change. Waiting on Inan's choice before touching
 `nodes.py` or `executor.py`.
+
+## Decision (2026-10-03)
+
+Inan chose option (c). Implemented as described in "As built" above.
+The confirmatory experiment plan
+(`experiments/h1_pooling/PREREG_V2_CONFIRM.md`) is being rewritten
+against the redesigned engine; the old plan is superseded.

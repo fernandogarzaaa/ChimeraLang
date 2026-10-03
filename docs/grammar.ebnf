@@ -108,10 +108,18 @@ resolve_stmt       = "resolve" , IDENT , "with" , "consensus"
 
 resolve_field      = "threshold" , ":" , number
                    | "strategy" , ":" , IDENT ;
-(* strategy is a label kept for language compatibility; the implemented
-   operation is BetaDist.combine_pseudocount: pseudocount addition
-   (alpha + alpha' - 1, beta + beta' - 1) with a K conflict check,
-   not formal Dempster-Shafer combination. *)
+(* strategy is one of: agreement | pooled | dempster_shafer.
+   agreement (the default when a belief has more than one source with
+   answers) is vote-share over normalized answers: the winner is the
+   most common normalized answer, ties broken by earliest source in
+   agent order; the resolved belief carries raw agreement (votes/N), a
+   Laplace-smoothed Beta posterior, and the winning answer text.
+   pooled is BetaDist.combine_pseudocount: pure pseudocount addition
+   (alpha + alpha', beta + beta') with a K conflict check.
+   dempster_shafer is accepted as an alias of pooled with a lowering
+   warning; it was never formal Dempster-Shafer combination.
+   Single-source resolve passes through unchanged whatever the
+   strategy. *)
 
 guard_stmt         = "guard" , IDENT , "against" , "hallucination"
                    , [ "{" , NEWLINE
