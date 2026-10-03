@@ -148,6 +148,10 @@ def cmd_run(path: str, *, show_trace: bool = False, extra_args: list[str] | None
             (a.split("=", 1)[1] for a in args if a.startswith("--calibrator=")), None
         )
         require_dominance = "--require-dominance" in args
+        strict_guard = "--strict-guard" in args
+        cert_out = next(
+            (a.split("=", 1)[1] for a in args if a.startswith("--cert-out=")), None
+        )
         calibrator = None
         if calibrator_path is not None:
             from chimera.cir.calibration import LogisticCalibrator
@@ -164,10 +168,20 @@ def cmd_run(path: str, *, show_trace: bool = False, extra_args: list[str] | None
         try:
             cir_result = run_cir(program, save_symbols=save_sym, load_symbols=load_sym,
                                  calibrator=calibrator,
-                                 require_dominance=require_dominance)
+                                 require_dominance=require_dominance,
+                                 strict_guard=strict_guard)
         except LoweringError as e:
             print(f"chimera: lowering error: {e}", file=sys.stderr)
             sys.exit(1)
+        if cert_out:
+            from chimera.cir.certify import certify_cir
+            graph = cir_result.meta.get("cir_graph")
+            cert = certify_cir(source, graph, cir_result,
+                               strict_guard=strict_guard,
+                               calibrator=calibrator)
+            Path(cert_out).write_text(json.dumps(cert, indent=2),
+                                      encoding="utf-8")
+            print(f"chimera: wrote CIR certificate {cert_out}")
 
         if cir_result.emitted:
             for name, dist in cir_result.emitted:

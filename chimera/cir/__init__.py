@@ -99,6 +99,8 @@ def run_cir(
                            agreement_comparator=agreement_comparator,
                            answer_normalizer=answer_normalizer)
     result = executor.run(graph)
+    # Expose the lowered graph for certificate production (certify_cir).
+    result.meta["cir_graph"] = graph
 
     prompts = [
         n.prompt for n in graph.nodes.values() if isinstance(n, InquiryNode)
