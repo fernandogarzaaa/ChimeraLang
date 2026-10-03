@@ -447,8 +447,18 @@ The certificate claims "enforced" (structural dominance holds) but
 
 The "enforced" claim does NOT mean:
 - The guards are meaningful (a vacuous guard still yields "enforced")
-- The guards are calibrated (uncalibrated posterior means have
-  AUROC 0.67-0.75, not perfect)
+- The guards are calibrated. Evidence, split by run:
+  (1) Exploratory, questions 1-500
+  (`experiments/h1_pooling/runs/2026-10-02-nebius/V2_RESULTS.md`):
+  verbalized-confidence arms had AUROC 0.51-0.54 in Mode B (near
+  chance); agreement had AUROC 0.72 (Mode A) and 0.76 (Mode B).
+  Verbalized confidence was only measured in the exploratory run.
+  (2) Confirmatory, fresh questions 501-1000, frozen rules
+  (`experiments/h1_pooling/REPORT_V2_CONFIRM.md`): agreement AUROC
+  0.6714 (CI [0.6280, 0.7185]) Mode A, 0.7519 (CI [0.7121, 0.7908])
+  Mode B; calibration helped in Mode B (Brier gain CI [0.0156,
+  0.0468]) but not clearly in Mode A (CI [-0.0007, 0.0300]); verdict
+  Inconclusive.
 - A particular run was honest
 - The beliefs were well-formed
 - Any specific model produced the beliefs

@@ -163,12 +163,23 @@ fail), `uncalibrated` (uses raw posterior means), or `nonvacuous`
 (meaningful thresholds on calibrated scores). `chimera verify` prints
 a WARNING when any dominating guard is vacuous or uncalibrated.
 
-The H1 confirmatory experiment (4,000 calls, zero parse failures)
-found: verbalized-confidence AUROC 0.51 to 0.54 in Mode B (near
-chance); agreement AUROC 0.6714 (95% CI [0.6280, 0.7185]) in Mode A
-and 0.7519 (95% CI [0.7121, 0.7908]) in Mode B on fresh questions; the
-calibration result was Inconclusive under the frozen rules. A threshold
-on an uncalibrated posterior mean is not a guarantee.
+Evidence, split by run:
+
+(1) Exploratory run, questions 1 to 500
+(`experiments/h1_pooling/runs/2026-10-02-nebius/V2_RESULTS.md`):
+verbalized-confidence arms (single call, mean, pooled) had AUROC 0.51
+to 0.54 in Mode B, near chance; agreement had AUROC 0.72 (Mode A) and
+0.76 (Mode B) there. Verbalized confidence was only measured in the
+exploratory run.
+
+(2) Confirmatory run, fresh questions 501 to 1000, frozen rules
+(`experiments/h1_pooling/REPORT_V2_CONFIRM.md`): agreement AUROC
+0.6714 (95% CI [0.6280, 0.7185]) in Mode A and 0.7519 (95% CI [0.7121,
+0.7908]) in Mode B; calibration helped in Mode B (Brier gain over
+constant, CI [0.0156, 0.0468]) but not clearly in Mode A (CI
+[-0.0007, 0.0300]); verdict Inconclusive.
+
+A threshold on an uncalibrated posterior mean is not a guarantee.
 
 Trust boundary: the certificate proves a source has this structural
 property. It does not prove that a particular run was honest, that the
