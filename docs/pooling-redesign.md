@@ -74,6 +74,16 @@ held-out calibration set: it rescales scores, it does not create
 ranking signal (the H1 v2 finding was Platt restoring ECE to ~0.04
 with mode-B AUROC still ~0.51).
 
+Confirmatory result (PREREG_V2_CONFIRM, SimpleQA questions 501-1000,
+4,000 Nebius calls, 2026-10-03, frozen rules): agreement replicated as
+an informative signal on fresh questions (mode A AUROC 0.6714, mode B
+AUROC 0.7519). Calibration, which is opt-in, was shown to help for
+five-sample single-model resolution (95% CI of constant-minus-calibrated
+Brier [0.0156, 0.0468]) but not shown for cross-model resolution (95%
+CI [-0.0007, 0.0300]). Verdict: Inconclusive. Full report:
+`experiments/h1_pooling/REPORT_V2_CONFIRM.md`. Scope is SimpleQA and
+the three models run; no generalization claim is made beyond them.
+
 ## The defect
 
 `BetaDist.combine_pseudocount` (`chimera/cir/nodes.py:50`) merges two

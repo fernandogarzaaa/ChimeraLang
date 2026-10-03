@@ -176,6 +176,19 @@ so multi-source beliefs with answers resolve by vote share unless
 `strategy: pooled` is given explicitly. Single-source resolve passes
 through unchanged whatever the strategy.
 
+Confirmatory check (`PREREG_V2_CONFIRM`, SimpleQA questions 501-1000,
+4,000 Nebius calls, 2026-10-03): agreement replicated as an informative
+signal on fresh questions (mode A AUROC 0.6714, mode B AUROC 0.7519).
+Calibration is opt-in and was shown to help for five-sample single-model
+resolution (95% CI of constant-minus-calibrated Brier [0.0156, 0.0468])
+but not shown for cross-model resolution (95% CI [-0.0007, 0.0300]).
+Verdict: Inconclusive under the frozen rules; see
+`experiments/h1_pooling/REPORT_V2_CONFIRM.md`. These numbers are scoped
+to SimpleQA and the three models used
+(`Qwen/Qwen3-235B-A22B-Instruct-2507`, `deepseek-ai/DeepSeek-V4-Pro`,
+`google/gemma-3-27b-it`); they do not establish generalization beyond
+them.
+
 **Opt-in calibration.** A resolved belief's score is uncalibrated by
 default (lowering warns loudly). `chimera/cir/calibration.py` provides
 `LogisticCalibrator`, a deterministic pure-Python logistic fit of
