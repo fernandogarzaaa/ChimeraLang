@@ -128,11 +128,16 @@ guard_stmt         = "guard" , IDENT , "against" , "hallucination"
 
 guard_field        = "max_risk" , ":" , number
                    | "strategy" , ":" , IDENT
-                   | "max_variance" , ":" , number ;
+                   | "max_variance" , ":" , number
+                   | "strict" , ":" , ( "true" | "false" ) ;
 (* strategy is one of: mean | variance | both.
    max_variance is optional; when absent the executor uses the legacy
    0.05 default. The lowering pass warns when the effective limit is
-   unreachable for inquiry-produced beliefs. *)
+   unreachable for inquiry-produced beliefs.
+   strict is optional, default false. When true, a failing guard raises
+   GuardViolation and halts the run, like the global strict_guard run
+   flag. Only source-level strict guards count toward the certificate's
+   "enforced" dominance claim. *)
 
 evolve_stmt        = "evolve" , IDENT , "until" , IDENT
                    , [ "{" , NEWLINE

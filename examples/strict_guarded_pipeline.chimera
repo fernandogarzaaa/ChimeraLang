@@ -1,0 +1,12 @@
+belief x := inquire {
+  prompt: "Is the sky blue?",
+  agents: [claude]
+}
+
+resolve x with consensus { threshold: 0.8 }
+
+guard x against hallucination { max_risk: 0.2, strategy: both, strict: true }
+
+evolve x until stable { max_iter: 3 }
+
+emit x

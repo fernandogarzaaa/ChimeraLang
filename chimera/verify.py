@@ -307,20 +307,25 @@ class CertificateVerifier:
         return _canonical_bytes(serialize_graph(graph)), ""
 
     @staticmethod
-    def _recompute_dominance(graph: dict) -> tuple[bool, list[dict]]:
+    def _recompute_dominance(graph: dict) -> tuple[bool, bool, list[dict]]:
         """Independently recompute dominance from the embedded graph.
 
         Standalone reimplementation operating only on the serialized
         structure. Never trusts a stored flag or stored evidence.
+        Returns (dominated, all_strict, evidence). all_strict is True
+        iff every ValidationNode dominating a consumer on any path
+        carries strict=True. The cir.strict_guard flag is ignored.
         """
         kinds = {n["id"]: n["kind"] for n in graph.get("nodes", [])}
+        strict_of = {n["id"]: bool(n.get("strict", False))
+                     for n in graph.get("nodes", [])}
         preds: dict[str, list[str]] = {}
         for e in graph.get("edges", []):
             preds.setdefault(e["target_id"], []).append(e["source_id"])
         consensus = {nid for nid, k in kinds.items()
                      if k == "ConsensusNode"}
 
-        def dominated(consumer_id: str) -> bool:
+        def paths_to(consumer_id: str) -> list[list[str]]:
             paths: list[list[str]] = []
             stack = [(consumer_id, [consumer_id], {consumer_id})]
             while stack:
@@ -331,21 +336,28 @@ class CertificateVerifier:
                     continue
                 for p in ps:
                     stack.append((p, path + [p], seen | {p}))
+            return paths
+
+        def dominating_guards(path: list[str]) -> list[str]:
+            last_cons = -1
+            for i, nid in enumerate(path):
+                if nid in consensus:
+                    last_cons = i
+            return [nid for i, nid in enumerate(path)
+                    if kinds.get(nid) == "ValidationNode" and i > last_cons]
+
+        def dominated(consumer_id: str) -> bool:
+            paths = paths_to(consumer_id)
             if not paths:
                 return False
             for path in paths:
-                last_cons = -1
-                for i, nid in enumerate(path):
-                    if nid in consensus:
-                        last_cons = i
-                if not any(kinds.get(nid) == "ValidationNode"
-                           and i > last_cons
-                           for i, nid in enumerate(path)):
+                if not dominating_guards(path):
                     return False
             return True
 
         evidence: list[dict] = []
         all_ok = True
+        all_guards: set[str] = set()
         consumers = (
             [n["id"] for n in graph.get("nodes", [])
              if n["kind"] == "EvolutionNode"]
@@ -353,13 +365,83 @@ class CertificateVerifier:
         )
         for cid in consumers:
             ok = dominated(cid)
+            if ok:
+                for path in paths_to(cid):
+                    all_guards.update(dominating_guards(path))
             evidence.append({"consumer": cid, "dominated": ok})
             all_ok = all_ok and ok
-        return all_ok, evidence
+        all_strict = all(strict_of[gid] for gid in all_guards)
+        return all_ok, all_strict, evidence
 
     @staticmethod
-    def _expected_dominance_claim(dominated: bool, strict_guard: bool) -> str:
-        if dominated and strict_guard:
+    def _recompute_guard_list(graph: dict) -> list[dict]:
+        """Recompute the dominating guard list from a serialized graph dict.
+
+        Returns entries with id, strategy, max_risk, max_variance, strict,
+        and vacuous. score_source is not in the graph; it comes from the
+        certificate's validations and is checked separately.
+        """
+        from chimera.cir.nodes import is_vacuous_guard
+        kinds = {n["id"]: n["kind"] for n in graph.get("nodes", [])}
+        nodes_by_id = {n["id"]: n for n in graph.get("nodes", [])}
+        preds: dict[str, list[str]] = {}
+        for e in graph.get("edges", []):
+            preds.setdefault(e["target_id"], []).append(e["source_id"])
+        consensus = {nid for nid, k in kinds.items()
+                     if k == "ConsensusNode"}
+
+        def paths_to(consumer_id: str) -> list[list[str]]:
+            paths: list[list[str]] = []
+            stack = [(consumer_id, [consumer_id], {consumer_id})]
+            while stack:
+                nid, path, seen = stack.pop()
+                ps = [p for p in preds.get(nid, []) if p not in seen]
+                if not ps:
+                    paths.append(list(reversed(path)))
+                    continue
+                for p in ps:
+                    stack.append((p, path + [p], seen | {p}))
+            return paths
+
+        def dominating_guards(path: list[str]) -> list[str]:
+            last_cons = -1
+            for i, nid in enumerate(path):
+                if nid in consensus:
+                    last_cons = i
+            return [nid for i, nid in enumerate(path)
+                    if kinds.get(nid) == "ValidationNode" and i > last_cons]
+
+        all_guards: set[str] = set()
+        consumers = (
+            [n["id"] for n in graph.get("nodes", [])
+             if n["kind"] == "EvolutionNode"]
+            + [eid for eid in graph.get("emit_ids", []) if eid in kinds]
+        )
+        for cid in consumers:
+            for path in paths_to(cid):
+                # Only count guards if the consumer is dominated.
+                if dominating_guards(path):
+                    all_guards.update(dominating_guards(path))
+
+        result = []
+        for gid in sorted(all_guards):
+            gnode = nodes_by_id.get(gid, {})
+            strategy = gnode.get("strategy", "both")
+            max_risk = gnode.get("max_risk", 0.2)
+            max_variance = gnode.get("max_variance")
+            result.append({
+                "id": gid,
+                "strategy": strategy,
+                "max_risk": max_risk,
+                "max_variance": max_variance,
+                "strict": bool(gnode.get("strict", False)),
+                "vacuous": is_vacuous_guard(strategy, max_risk, max_variance),
+            })
+        return result
+
+    @staticmethod
+    def _expected_dominance_claim(dominated: bool, all_strict: bool) -> str:
+        if dominated and all_strict:
             return "enforced"
         if dominated:
             return "non-blocking"
@@ -419,18 +501,21 @@ class CertificateVerifier:
             failures.append("cir: graph_hash mismatch (graph modified)")
 
         # --- Check 5: dominance recomputation ------------------------------
-        # Recomputed from the embedded graph structure. The stored claim
-        # and stored evidence are never trusted.
+        # Recomputed from the embedded graph structure. The stored claim,
+        # the stored evidence, and the cir.strict_guard run flag are
+        # never trusted: the expected claim is derived from the
+        # source-level strict flags on the re-derived graph alone.
         checks_run += 1
-        dominated, _evidence = (
+        dominated, all_strict, _evidence = (
             CertificateVerifier._recompute_dominance(graph))
         expected_claim = CertificateVerifier._expected_dominance_claim(
-            dominated, bool(cir.get("strict_guard")))
+            dominated, all_strict)
         stored_claim = (cir.get("dominance") or {}).get("claim")
         if stored_claim != expected_claim:
             failures.append(
                 f"dominance: stored claim {stored_claim!r} does not match "
-                f"recomputed {expected_claim!r} (dominated={dominated})")
+                f"recomputed {expected_claim!r} (dominated={dominated}, "
+                f"all_strict={all_strict})")
 
         # --- Check 5b: graph-source link ----------------------------------
         # Re-lower cir.program_source with the real parser and lowering
@@ -453,6 +538,60 @@ class CertificateVerifier:
             failures.append(
                 "graph-source link: re-derived graph does not match the "
                 "embedded graph (program_source and graph are inconsistent)")
+
+        # --- Check 5c: guard list recomputation ---------------------------
+        # Recompute the dominating guard list from the re-derived graph
+        # and compare to the embedded list. The stored list is never
+        # trusted. This catches a producer that hides a vacuous guard
+        # by editing the list.
+        if rederived_bytes is not None:
+            checks_run += 1
+            try:
+                import json as _json
+                rederived_dict = _json.loads(rederived_bytes.decode("utf-8"))
+                expected_guards = (
+                    CertificateVerifier._recompute_guard_list(rederived_dict))
+                stored_guards = (cir.get("dominance") or {}).get("guards", [])
+                # Compare the recomputable fields (id, strategy, thresholds,
+                # strict, vacuous). score_source is validated separately.
+                def _guard_key(g):
+                    return (g.get("id"), g.get("strategy"), g.get("max_risk"),
+                            g.get("max_variance"), g.get("strict"),
+                            g.get("vacuous"))
+                expected_keys = sorted(_guard_key(g) for g in expected_guards)
+                stored_keys = sorted(_guard_key(g) for g in stored_guards)
+                if expected_keys != stored_keys:
+                    failures.append(
+                        "dominance: stored guard list does not match "
+                        "recomputed from re-derived graph "
+                        f"(expected {expected_keys}, got {stored_keys})")
+                # Also verify guard_strength.
+                from chimera.cir.nodes import is_vacuous_guard as _ivg
+                exp_strength = "nonvacuous"
+                # Recompute strength from expected guards + validations.
+                validations = cir.get("validations", [])
+                score_lookup = {}
+                for v in validations:
+                    key = (v.get("strategy"), v.get("max_risk"),
+                           v.get("max_variance"))
+                    if key not in score_lookup:
+                        score_lookup[key] = v.get("score_source",
+                                                  "uncalibrated")
+                if any(g.get("vacuous") for g in expected_guards):
+                    exp_strength = "vacuous"
+                elif any(score_lookup.get(
+                        (g.get("strategy"), g.get("max_risk"),
+                         g.get("max_variance")), "uncalibrated") == "uncalibrated"
+                        for g in expected_guards):
+                    exp_strength = "uncalibrated"
+                stored_strength = (cir.get("dominance") or {}).get(
+                    "guard_strength")
+                if stored_strength != exp_strength:
+                    failures.append(
+                        f"dominance: stored guard_strength {stored_strength!r} "
+                        f"does not match recomputed {exp_strength!r}")
+            except Exception as e:
+                failures.append(f"dominance: guard list recomputation failed ({e})")
 
         # --- Check 6: HMAC --------------------------------------------------
         if hmac_key is not None:

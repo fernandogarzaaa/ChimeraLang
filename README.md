@@ -134,11 +134,58 @@ python -m chimera.cli verify cert.json
 
 `--cert-out` writes a `chimeralang-cert/v2` certificate with a `cir`
 section: the program source, the lowered graph, per-guard
-`score_source` (`calibrated`/`uncalibrated`), the `strict_guard` flag,
-and a dominance claim (`enforced` only when dominance holds and
-`strict_guard` was on, else `non-blocking` or `absent`).
+`score_source` (`calibrated`/`uncalibrated`), the `strict_guard` run
+flag (recorded for information only), and a dominance claim
+(`enforced` only when dominance holds and every guard on every
+dominating path is source-level `strict: true`; otherwise
+`non-blocking` or `absent`).
 `chimera verify` recomputes dominance from the embedded graph and
-never trusts the stored claim. See `docs/design/guard-dominance.md`.
+never trusts the stored claim or the `strict_guard` flag. A
+source-level strict guard (`guard x against hallucination {
+max_risk: 0.2, strict: true }`) makes a failing guard raise
+`GuardViolation` and halt the run, like `--strict-guard`, but it is
+part of the program source and therefore determines the certificate
+claim. See `docs/design/guard-dominance.md` and
+`examples/strict_guarded_pipeline.chimera`.
+
+#### What the dominance claim means
+
+"Enforced" means every guard on every belief-flow path to each
+effectful node is source-level strict. This is structural dominance:
+a property of the program source, verified by re-lowering the source
+and checking the graph.
+
+It does not mean the guards are meaningful or calibrated. A guard with
+`max_risk: 1.0` can never fail (it requires score >= 0) yet still
+yields "enforced". The certificate's `dominance.guard_strength` field
+reports the worst case over dominating guards: `vacuous` (can never
+fail), `uncalibrated` (uses raw posterior means), or `nonvacuous`
+(meaningful thresholds on calibrated scores). `chimera verify` prints
+a WARNING when any dominating guard is vacuous or uncalibrated.
+
+Evidence, split by run:
+
+(1) Exploratory run, questions 1 to 500
+(`experiments/h1_pooling/runs/2026-10-02-nebius/V2_RESULTS.md`):
+verbalized-confidence arms (single call, mean, pooled) had AUROC 0.51
+to 0.54 in Mode B, near chance; agreement had AUROC 0.72 (Mode A) and
+0.76 (Mode B) there. Verbalized confidence was only measured in the
+exploratory run.
+
+(2) Confirmatory run, fresh questions 501 to 1000, frozen rules
+(`experiments/h1_pooling/REPORT_V2_CONFIRM.md`): agreement AUROC
+0.6714 (95% CI [0.6280, 0.7185]) in Mode A and 0.7519 (95% CI [0.7121,
+0.7908]) in Mode B; calibration helped in Mode B (Brier gain over
+constant, CI [0.0156, 0.0468]) but not clearly in Mode A (CI
+[-0.0007, 0.0300]); verdict Inconclusive.
+
+A threshold on an uncalibrated posterior mean is not a guarantee.
+
+Trust boundary: the certificate proves a source has this structural
+property. It does not prove that a particular run was honest, that the
+beliefs were well-formed, or which model produced them. The
+`score_source` field (`calibrated`/`uncalibrated`) is a run-time
+observation, not a structural guarantee.
 
 ### Saving and reusing symbols
 
