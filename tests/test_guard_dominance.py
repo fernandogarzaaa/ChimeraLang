@@ -262,8 +262,14 @@ def test_run_cir_default_warns_not_raises():
 def _make_certed_run(strict_guard=False, calibrator=None):
     from chimera.cir import run_cir
     from chimera.cir.certify import certify_cir
+    from chimera.cir.executor import InquiryResponse
+
+    def adapter(prompt, agents):
+        return InquiryResponse(confidence=0.95, answer="yes")
+
     prog = parse_src(CANONICAL)
-    result = run_cir(prog, strict_guard=strict_guard, calibrator=calibrator)
+    result = run_cir(prog, strict_guard=strict_guard, calibrator=calibrator,
+                     inquiry_adapter=adapter)
     lowering = CIRLowering()
     graph = lowering.lower(prog)
     src = CANONICAL
