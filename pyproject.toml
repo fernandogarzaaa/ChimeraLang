@@ -1,6 +1,6 @@
 [project]
 name = "chimeralang"
-version = "0.2.0"
+version = "0.3.0"
 description = "A programming language designed for AI cognition: probabilistic types, quantum consensus, and directed hallucination."
 readme = "README.md"
 requires-python = ">=3.11"
