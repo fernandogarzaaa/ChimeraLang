@@ -19,9 +19,9 @@ Backends:
 
 Response schema (one JSON object per line):
   id, question, question_index, gold_answers, dataset, dataset_sha256,
-  prompt, prompt_sha256, model, model_id, sample_index, backend,
-  mode, temperature, raw, raw_sha256, parsed_answer, parsed_confidence,
-  parse_ok
+  prompt, prompt_sha256, model, model_id, provider_model_id, sample_index,
+  backend, mode, temperature, raw, raw_sha256, parsed_answer,
+  parsed_confidence, parse_ok
 
 question_index is the 0-based position of the question in the dataset
 file, so the analysis can reconstruct dataset order (and the
@@ -126,12 +126,15 @@ def anthropic_response(prompt: str, model_id: str, temperature: float) -> str:
     )
 
 
-def nebius_response(prompt: str, model_id: str, temperature: float) -> str:
+def nebius_response(prompt: str, model_id: str, temperature: float) -> tuple[str, str]:
     """One chat completion via Nebius Token Factory.
 
     Auth goes through authd's surrogate exchange (see the nebius skill):
     only hsurr:* values leave this machine, and only to
     api.tokenfactory.nebius.com. Raises RuntimeError on failure.
+
+    Returns (content, provider_model_id) where provider_model_id is the
+    model id string the provider actually returned for the call.
     """
     sys.path.insert(0, "/opt/hatch/skills/skill-creator/bin")
     from dynamic_credentials import (  # noqa: E402
@@ -161,7 +164,8 @@ def nebius_response(prompt: str, model_id: str, temperature: float) -> str:
             choices = data.get("choices") or []
             if not choices:
                 raise RuntimeError("Nebius response missing choices")
-            return choices[0]["message"]["content"]
+            provider_model_id = str(data.get("model") or model_id)
+            return choices[0]["message"]["content"], provider_model_id
         except Exception as exc:  # noqa: BLE001 - retry transient failures
             last_exc = exc
             time.sleep(2 ** attempt)
@@ -244,11 +248,18 @@ def main() -> int:
     dataset_name = os.path.basename(args.dataset)
 
     def make_raw(prompt: str, qid: str, question: str, gold: list,
-                 model: str, idx: int) -> str:
+                 model: str, idx: int) -> tuple[str, str]:
+        """Return (raw response text, provider-returned model id).
+
+        The synthetic and anthropic backends have no provider model id
+        to report, so they echo the requested id.
+        """
         if args.backend == "synthetic":
-            return synthetic_response(qid, question, gold, model, idx, args.seed)
+            return (synthetic_response(qid, question, gold, model, idx, args.seed),
+                    model_ids[model])
         if args.backend == "anthropic":
-            return anthropic_response(prompt, model_ids[model], temperature)
+            return (anthropic_response(prompt, model_ids[model], temperature),
+                    model_ids[model])
         return nebius_response(prompt, model_ids[model], temperature)
 
     def build_row(qi: int, row: dict, model: str, idx: int) -> dict:
@@ -256,7 +267,7 @@ def main() -> int:
         question = row["question"]
         gold = row["gold_answers"]
         prompt = build_prompt(question)
-        raw = make_raw(prompt, qid, question, gold, model, idx)
+        raw, provider_model_id = make_raw(prompt, qid, question, gold, model, idx)
         answer, confidence, ok = parse_response(raw)
         return {
             "id": qid,
@@ -269,6 +280,7 @@ def main() -> int:
             "prompt_sha256": PROMPT_SHA256,
             "model": model,
             "model_id": model_ids[model],
+            "provider_model_id": provider_model_id,
             "sample_index": idx,
             "backend": args.backend,
             "mode": args.mode,

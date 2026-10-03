@@ -39,14 +39,15 @@ engine path, not an offline reimplementation:
 - The `pooled` strategy (pure additive Beta algebra) is exercised as a
   secondary arm to confirm the saturation defect is gone.
 - Calibration: one frozen calibrator per source configuration
-  (section 5) is applied unchanged. Mode-A questions use the mode-A
+  (section 4) is applied unchanged. Mode-A questions use the mode-A
   calibrator; mode-B questions use the mode-B calibrator. `calibrated_p`
   is the only probability reported for decisions. The uncalibrated
   posterior mean is recorded for comparison only.
 - The fixed analysis is `experiments/h1_pooling/analyze_confirm.py`
-  (SHA-256 `c4b0d4cc4b7bf1f4fd857955ddf1a7052941d59414b4f47bd1ea391fc31b19fa`).
-  It verifies the dataset and calibrator hashes at run time and refuses
-  to run on any mismatch.
+  (SHA-256 `8655f0ce5935c2fe1acfad49e23d9f671241ebe33acca9dbca5d1375d1652ca5`).
+  It verifies the dataset, calibrator, and model-id table hashes at run
+  time and refuses to run on any mismatch, including a model id that
+  differs from the hash-checked table in section 6.
 
 ## 3. Confirmatory dataset (frozen)
 
@@ -91,38 +92,72 @@ Before the full run, 10 questions per model are collected and verified:
 - Mode A: 3 models x 10 questions = 30 calls.
 - Mode B: 1 model x 10 questions x 5 samples = 50 calls.
 - 80 calls total, on questions simpleqa-0501 through simpleqa-0510.
+- These 80 smoke responses are REUSED in the full run: they count
+  toward the 4,000 total (section 9), and the full run collects only
+  the remaining 3,920 calls on questions 0511-1000. No question is
+  collected twice.
 - Verification: `experiments/h1_pooling/smoke_test.py`
-  (SHA-256 `046942d75fa5f263218b63728ce9a2e4aea219326c9d0b6951c123450251d31b`).
+  (SHA-256 `ee19e031a64320c3f87eb8bda4a147868403b89dd78feb3eb3cdb55415da3197`).
   It checks exactly 10 questions per model per mode, 100 percent parse_ok,
-  and a clean engine replay (agreement resolve) for every question.
-- It writes a run manifest recording model ids and timestamps
-  (`started_at`, `ended_at`), plus per-model question counts and
-  parse_ok rates.
-- The full 4,000-call run proceeds ONLY on `SMOKE: PASS`. Any failure
+  that every collected model_id matches the hash-checked model-id table
+  in section 6 (SMOKE: FAIL on any mismatch), and a clean engine replay
+  (agreement resolve) for every question.
+- Correctness is deliberately NOT inspected at the smoke gate: no
+  grading against gold answers happens there, so no confirmatory
+  outcome can leak into the collection decision. The gate checks
+  pipeline health only (collection, parsing, engine replay).
+- It writes a run manifest recording the requested model ids, the
+  provider-returned model id per row (`provider_model_id`), the
+  model-id table SHA-256, and timestamps (`started_at`, `ended_at`),
+  plus per-model question counts and parse_ok rates.
+- The full run proceeds ONLY on `SMOKE: PASS`. Any failure
   stops the run before further spend.
 
 ## 6. Collection protocol (identical to H1)
 
 Same models, same prompts, same temperatures, same modes, same parse and
 grading code as the 2026-10-02 run. The only change is the question file.
+Model ids below are the exact Nebius Token Factory ids from
+`collect.py` `DEFAULT_NEBIUS_MODELS`, and match the H1 run's collected
+rows verbatim (short agent names: qwen3-235b, deepseek-v4pro, gemma-3-27b).
 
-- Mode B (self-consistency): Qwen3-235B-A22B-FP8-T, temperature 1.0,
-  5 samples per question, 500 questions = **2,500 calls**.
-- Mode A (cross-model): Qwen3-235B-A22B-FP8-T, DeepSeek-V3.1-Terminus,
-  MiniMax-M2, temperature 0.0, 1 sample each per question,
-  500 questions x 3 models = **1,500 calls**.
+- Mode B (self-consistency): `Qwen/Qwen3-235B-A22B-Instruct-2507`,
+  temperature 1.0, 5 samples per question, 500 questions =
+  **2,500 calls**.
+- Mode A (cross-model): `Qwen/Qwen3-235B-A22B-Instruct-2507`,
+  `deepseek-ai/DeepSeek-V4-Pro`, `google/gemma-3-27b-it`, temperature 0.0,
+  1 sample each per question, 500 questions x 3 models = **1,500 calls**.
 - Correctness grading: `normalize_answer` exact match against gold answers,
   the same function used in H1 and in the engine.
+- Every collected row records both the requested `model_id` and the
+  provider-returned model id (`provider_model_id`, from the Nebius API
+  response's `model` field), so the smoke manifest and analysis can show
+  exactly which model string the provider served for each call.
+
+Model-id table (hash-checked). `experiments/h1_pooling/model_ids.json`
+(SHA-256 `e5d9b8e330a024acd1463856d0230d57edb3cfc19a9aaf9f412b4076c6320a6b`):
+
+| mode   | expected model_id(s)                                                                                                  |
+|--------|-----------------------------------------------------------------------------------------------------------------------|
+| mode_A | `Qwen/Qwen3-235B-A22B-Instruct-2507`, `deepseek-ai/DeepSeek-V4-Pro`, `google/gemma-3-27b-it`                           |
+| mode_B | `Qwen/Qwen3-235B-A22B-Instruct-2507`                                                                                  |
+
+Both `smoke_test.py` and `analyze_confirm.py` verify this table's
+SHA-256 at run time and refuse if any collected row's `model_id` differs
+from the table for its mode. The table may not be edited after freeze;
+any model change would require a new preregistration.
 
 ## 7. Analysis plan (fixed)
 
 `analyze_confirm.py` is the only analysis that counts. For each mode
 separately, on questions 501-1000:
 
-1. Verify SHA-256 of the dataset and both calibrators against the hashes
-   in sections 3 and 4; refuse (exit 2) on any mismatch. Also refuse if
-   a calibrator's `metadata.n_sources` does not match its mode, or if any
-   question has the wrong source count.
+1. Verify SHA-256 of the dataset, both calibrators, and the model-id
+   table against the hashes in sections 3, 4, and 6; refuse (exit 2)
+   on any mismatch. Also refuse if a calibrator's `metadata.n_sources`
+   does not match its mode, if any question has the wrong source count,
+   or if any response row's `model_id` is not in the model-id table for
+   its mode.
 2. Replay every question through the engine's agreement resolve, applying
    the mode's frozen calibrator.
 3. Primary metric: AUROC of the agreement score (Laplace posterior mean)
@@ -182,11 +217,14 @@ Outcomes:
 
 ## 9. Call count and cost (exact)
 
-- Smoke test: 80 calls (mode A 30 + mode B 50).
-- Confirmatory run: 4,000 calls (mode B 2,500 + mode A 1,500).
-- Total: **4,080 calls**.
+- Smoke test: 80 calls (mode A 30 + mode B 50) on questions 0501-0510.
+  These 80 responses are reused in the full run, not added on top.
+- Confirmatory run: **4,000 calls total** (mode B 2,500 + mode A 1,500),
+  of which 80 are the smoke responses and 3,920 are new calls on
+  questions 0511-1000.
+- Total: **4,000 calls** (unchanged from H1).
 - Estimated cost: **about $0.15** (same models and mix as H1: ~$0.1515
-  for 4,000 calls; the 80 smoke calls add about $0.003).
+  for 4,000 calls).
 - No other paid calls are part of this plan.
 
 ## 10. Freeze and run procedure (NOT YET DONE)
@@ -194,10 +232,12 @@ Outcomes:
 1. Inan approves this plan (explicit go).
 2. Freeze: record the git SHA of this file and the SHA-256 hashes of the
    dataset (section 3), both calibrators (section 4), `analyze_confirm.py`
-   (section 2), and `smoke_test.py` (section 5) in the run manifest.
+   (section 2), `smoke_test.py` (section 5), and the model-id table
+   `model_ids.json` (section 6) in the run manifest.
    No edits after this point.
 3. Run the smoke test (section 5). Proceed only on SMOKE: PASS.
-4. Run collection on questions 501-1000 only.
+4. Run collection on questions 501-1000 only, reusing the 80 smoke
+   responses from questions 0501-0510 (no re-collection of those).
 5. Run `analyze_confirm.py` with the frozen hashes. Report the verdict
    (Confirmed / Falsified / Inconclusive) and every rule outcome exactly
    as specified, with contradictory outcomes (if any) as prominent as

@@ -3,16 +3,18 @@
 
 Fixed analysis script for PREREG_V2_CONFIRM. It:
 
-1. Verifies the SHA-256 of the dataset and both frozen calibrators
-   against expected hashes given on the command line, and REFUSES
-   to run (exit 2) on any mismatch.
-2. Replays every response through the engine's agreement resolve,
+1. Verifies the SHA-256 of the dataset, both frozen calibrators, and
+   the hash-checked model-id table against expected hashes given on
+   the command line, and REFUSES to run (exit 2) on any mismatch.
+2. Verifies every response row's model_id against the model-id table
+   for its mode, and REFUSES (exit 2) on any mismatch.
+3. Replays every response through the engine's agreement resolve,
    applying the per-mode frozen calibrator (mode A -> calibrator-a,
    mode B -> calibrator-b).
-3. Computes per mode: agreement AUROC with bootstrap 95% CI, and
+4. Computes per mode: agreement AUROC with bootstrap 95% CI, and
    Brier(calibrated) vs Brier(constant base-rate) with a bootstrap
    95% CI on the difference.
-4. Applies the preregistered decision rules and prints the verdict:
+5. Applies the preregistered decision rules and prints the verdict:
    Confirmed, Falsified, or Inconclusive.
 
 No network. No model calls. Deterministic given the inputs
@@ -22,7 +24,8 @@ Usage:
     analyze_confirm.py --responses R.jsonl --dataset D.jsonl \\
         --calibrator-a CA.json --calibrator-b CB.json \\
         --expected-dataset-sha256 H --expected-calibrator-a-sha256 H \\
-        --expected-calibrator-b-sha256 H
+        --expected-calibrator-b-sha256 H \\
+        --expected-model-ids model_ids.json --expected-model-ids-sha256 H
 """
 from __future__ import annotations
 
@@ -114,6 +117,9 @@ def main() -> None:
     ap.add_argument("--expected-dataset-sha256", required=True)
     ap.add_argument("--expected-calibrator-a-sha256", required=True)
     ap.add_argument("--expected-calibrator-b-sha256", required=True)
+    ap.add_argument("--expected-model-ids", required=True,
+                    help="hash-checked model-id table (model_ids.json)")
+    ap.add_argument("--expected-model-ids-sha256", required=True)
     args = ap.parse_args()
 
     # 1. Runtime hash verification. Refuse on any mismatch.
@@ -122,6 +128,8 @@ def main() -> None:
            "calibrator-a")
     verify(args.calibrator_b, args.expected_calibrator_b_sha256,
            "calibrator-b")
+    verify(args.expected_model_ids, args.expected_model_ids_sha256,
+           "model-id table")
 
     cal_a = LogisticCalibrator.from_json(open(args.calibrator_a).read())
     cal_b = LogisticCalibrator.from_json(open(args.calibrator_b).read())
@@ -142,6 +150,8 @@ def main() -> None:
                if l.strip()]
     print(f"dataset: {len(dataset)} questions, "
           f"{dataset[0]['id']}..{dataset[-1]['id']}")
+    model_table = json.loads(open(args.expected_model_ids,
+                                  encoding="utf-8").read())
     by_mode: dict[str, dict[int, list]] = {"A": {}, "B": {}}
     n_resp = 0
     for line in open(args.responses, encoding="utf-8"):
@@ -149,6 +159,14 @@ def main() -> None:
             continue
         r = json.loads(line)
         n_resp += 1
+        # Model-id gate: the collected model_id must be the
+        # preregistered id for the row's mode.
+        expected_ids = model_table.get(f"mode_{r['mode']}", [])
+        if r.get("model_id") not in expected_ids:
+            print(f"REFUSED: mode {r['mode']} row has model_id "
+                  f"{r.get('model_id')!r}, expected one of {expected_ids}",
+                  file=sys.stderr)
+            sys.exit(2)
         by_mode[r["mode"]].setdefault(r["question_index"], []).append(r)
     print(f"responses: {n_resp}")
 
