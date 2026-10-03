@@ -147,6 +147,7 @@ def cmd_run(path: str, *, show_trace: bool = False, extra_args: list[str] | None
         calibrator_path = next(
             (a.split("=", 1)[1] for a in args if a.startswith("--calibrator=")), None
         )
+        require_dominance = "--require-dominance" in args
         calibrator = None
         if calibrator_path is not None:
             from chimera.cir.calibration import LogisticCalibrator
@@ -159,8 +160,14 @@ def cmd_run(path: str, *, show_trace: bool = False, extra_args: list[str] | None
                 sys.exit(1)
             print(f"chimera: using calibrator {calibrator_path} "
                   f"(n={calibrator.n}, fit {calibrator.fit_date})")
-        cir_result = run_cir(program, save_symbols=save_sym, load_symbols=load_sym,
-                             calibrator=calibrator)
+        from chimera.cir.lower import LoweringError
+        try:
+            cir_result = run_cir(program, save_symbols=save_sym, load_symbols=load_sym,
+                                 calibrator=calibrator,
+                                 require_dominance=require_dominance)
+        except LoweringError as e:
+            print(f"chimera: lowering error: {e}", file=sys.stderr)
+            sys.exit(1)
 
         if cir_result.emitted:
             for name, dist in cir_result.emitted:

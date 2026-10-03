@@ -42,6 +42,7 @@ def run_cir(
     calibrator: "LogisticCalibrator | None" = None,
     agreement_comparator=None,
     answer_normalizer=None,
+    require_dominance: bool = False,
 ) -> CIRResult:
     """Full CIR pipeline.
 
@@ -62,12 +63,21 @@ def run_cir(
     posterior and a lowering warning says so. ``agreement_comparator``
     and ``answer_normalizer`` plug into the agreement resolve strategy
     (see :mod:`chimera.cir.agreement`).
+
+    ``require_dominance`` turns the guard-dominance static check from a
+    lowering warning into a ``LoweringError``: every effectful consumer
+    (evolve node, emit target) must be dominated by a validation node
+    on its belief lineage, and mean/both guards require a calibrator.
     """
     store = SymbolStore()
     if load_symbols:
         store.load_symbols(load_symbols)
 
-    lowering = CIRLowering(symbol_store=store)
+    lowering = CIRLowering(
+        symbol_store=store,
+        require_dominance=require_dominance,
+        calibrator=calibrator,
+    )
     graph = lowering.lower(program)
 
     if calibrator is None and any(

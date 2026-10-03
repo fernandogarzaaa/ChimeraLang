@@ -28,9 +28,16 @@ class LoweringError(Exception):
 
 
 class CIRLowering:
-    def __init__(self, symbol_store: "SymbolStore | None" = None) -> None:
+    def __init__(
+        self,
+        symbol_store: "SymbolStore | None" = None,
+        require_dominance: bool = False,
+        calibrator: object = None,
+    ) -> None:
         self.warnings: list[str] = []
         self._symbol_store = symbol_store
+        self._require_dominance = require_dominance
+        self._calibrator = calibrator
         self.priors_seeded: list[str] = []
 
     def lower(self, program: object) -> CIRGraph:
@@ -39,6 +46,7 @@ class CIRLowering:
         self.priors_seeded = []
 
         self._pass_structural(program, graph)
+        self._pass_guard_dominance(graph)
         self._pass_dead_belief_elimination(program, graph)
         self._pass_belief_flow_analysis(graph)
 
@@ -195,6 +203,88 @@ class CIRLowering:
                         decl.value.name, node_ids, "emit")
                     if node_id:
                         graph.emit_ids.append(node_id)
+
+    # ------------------------------------------------------------------
+    # Pass 1b: Guard dominance (static check)
+    # ------------------------------------------------------------------
+
+    def _dominates(self, graph: CIRGraph, consumer_id: str) -> bool:
+        """True iff every belief-flow path from a source to the consumer
+        passes through a ValidationNode positioned after the last
+        ConsensusNode on that path.
+
+        A guard before a resolve does not dominate the consensus belief
+        (intentional conservatism): the validation must validate the
+        belief version the consumer actually consumes.
+        """
+        nodes = graph.nodes
+        paths: list[list[str]] = []
+        stack: list[tuple[str, list[str], frozenset]] = [
+            (consumer_id, [consumer_id], frozenset({consumer_id}))]
+        while stack:
+            nid, path, seen = stack.pop()
+            preds = [p for p in graph.predecessors(nid) if p.id not in seen]
+            if not preds:
+                paths.append(list(reversed(path)))
+                continue
+            for p in preds:
+                stack.append((p.id, path + [p.id], seen | {p.id}))
+        if not paths:
+            return False
+        for path in paths:
+            last_cons = -1
+            for i, nid in enumerate(path):
+                if isinstance(nodes[nid], ConsensusNode):
+                    last_cons = i
+            if not any(
+                isinstance(nodes[nid], ValidationNode) and i > last_cons
+                for i, nid in enumerate(path)
+            ):
+                return False
+        return True
+
+    def _pass_guard_dominance(self, graph: CIRGraph) -> None:
+        """Static guard-dominance check.
+
+        Every effectful consumer (EvolutionNode, emit target) must be
+        dominated along belief-flow edges by a ValidationNode on the
+        same belief lineage, positioned after any resolve. Under
+        require_dominance a violation is a LoweringError; otherwise it
+        is a lowering warning. Under require_dominance a guard with
+        strategy 'mean' or 'both' and no calibrator is also a
+        LoweringError, because numeric thresholds on uncalibrated
+        posterior means are unsound.
+        """
+        if self._require_dominance and self._calibrator is None:
+            for nid, node in graph.nodes.items():
+                if (isinstance(node, ValidationNode)
+                        and node.strategy in ("mean", "both")):
+                    name = self._belief_name_for(graph, nid) or nid
+                    raise LoweringError(
+                        f"guard on '{name}' uses strategy '{node.strategy}' "
+                        f"with no calibrator: numeric thresholds on "
+                        f"uncalibrated posterior means are unsound. Supply a "
+                        f"calibrator or use strategy 'variance'."
+                    )
+        consumers: list[tuple[str, str]] = [
+            (nid, "evolve")
+            for nid, node in graph.nodes.items()
+            if isinstance(node, EvolutionNode)
+        ]
+        consumers.extend(
+            (eid, "emit") for eid in graph.emit_ids if eid in graph.nodes
+        )
+        for cid, kind in consumers:
+            if not self._dominates(graph, cid):
+                name = self._belief_name_for(graph, cid) or cid
+                msg = (
+                    f"guard dominance: effectful {kind} of belief '{name}' "
+                    f"is not guard-dominated (no ValidationNode on every "
+                    f"belief-flow path to node {cid}, after any resolve)"
+                )
+                if self._require_dominance:
+                    raise LoweringError(msg)
+                self.warnings.append(msg)
 
     # ------------------------------------------------------------------
     # Pass 2: Dead belief elimination

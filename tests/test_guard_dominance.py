@@ -15,6 +15,12 @@ def parse_src(src):
     return Parser(Lexer(src).tokenize()).parse()
 
 
+def _test_calibrator():
+    from chimera.cir.calibration import LogisticCalibrator
+    return LogisticCalibrator(
+        a=0.0, b=0.0, n=30, dataset_hash="test", fit_date="2026-10-03")
+
+
 EMIT_NO_GUARD = """belief x := inquire {
   prompt: "Is the sky blue?",
   agents: [claude]
@@ -132,8 +138,12 @@ def test_evolve_without_guard_raises_under_require():
 
 def test_guard_after_evolve_rejects_evolve_under_require():
     # The evolve is undominated even though a later guard exists.
+    # (Calibrator supplied to isolate the dominance rule from the
+    # decision-2 calibrator rule.)
     with pytest.raises(LoweringError) as exc_info:
-        CIRLowering(require_dominance=True).lower(parse_src(GUARD_AFTER_EVOLVE))
+        CIRLowering(require_dominance=True,
+                    calibrator=_test_calibrator()).lower(
+                        parse_src(GUARD_AFTER_EVOLVE))
     assert "evolve" in str(exc_info.value).lower()
 
 
@@ -177,16 +187,20 @@ def test_canonical_pipeline_no_warning_by_default():
 # ------------------------------------------------------------------
 
 def test_canonical_pipeline_passes_under_require():
-    # Must not raise.
-    CIRLowering(require_dominance=True).lower(parse_src(CANONICAL))
+    # Must not raise (calibrator supplied per decision 2).
+    CIRLowering(require_dominance=True,
+                calibrator=_test_calibrator()).lower(parse_src(CANONICAL))
 
 
 def test_single_source_guard_emit_passes_under_require():
-    CIRLowering(require_dominance=True).lower(parse_src(SINGLE_GUARD_EMIT))
+    CIRLowering(require_dominance=True,
+                calibrator=_test_calibrator()).lower(
+                    parse_src(SINGLE_GUARD_EMIT))
 
 
 def test_double_guard_passes_under_require():
-    CIRLowering(require_dominance=True).lower(parse_src(DOUBLE_GUARD))
+    CIRLowering(require_dominance=True,
+                calibrator=_test_calibrator()).lower(parse_src(DOUBLE_GUARD))
 
 
 # ------------------------------------------------------------------
@@ -201,8 +215,7 @@ def test_uncalibrated_mean_guard_rejected_under_require():
 
 
 def test_calibrated_mean_guard_accepted_under_require():
-    from chimera.cir.calibration import LogisticCalibrator
-    cal = LogisticCalibrator(a=0.0, b=0.0, n=30, fit_date="2026-10-03")
+    cal = _test_calibrator()
     # Must not raise.
     CIRLowering(require_dominance=True, calibrator=cal).lower(
         parse_src(SINGLE_GUARD_MEAN))
