@@ -1,10 +1,12 @@
-# Guard dominance: design proposal (2026-10-03)
+# Guard dominance: design and implementation (2026-10-03)
 
-**Status: proposal only. Nothing here is implemented.** The current
-state it builds on is mapped in
-`docs/design/guard-dominance-current-state.md`. This document proposes
-a static check; every section states what would change, with open
-product decisions collected at the end.
+**Status: implemented** on branch `feat/guard-dominance` (PR pending).
+The static check, score provenance, v2 certificates, and independent
+verification described below are implemented and tested
+(`tests/test_guard_dominance.py`, 25 tests). The current state it
+builds on is mapped in
+`docs/design/guard-dominance-current-state.md`. All six product
+decisions are marked CHOSEN below.
 
 ## 0. The check in one paragraph
 
@@ -158,9 +160,57 @@ attestation is therefore new machinery, not an extension:
   fails. This mirrors how `verify.py` already recomputes chain hashes,
   gate hashes, and the verdict rather than trusting stored values.
 
-The verifier stays offline and self-contained (stdlib only), per the
-`verify.py` module contract; the dominance recomputation uses only
-the embedded structure, never the live engine.
+**Trust boundary, stated exactly.** The v2 verifier additionally
+re-lowers `cir.program_source` with the real parser and lowering and
+compares the canonical serialized graph byte for byte to the embedded
+graph (node ids are deterministic creation-order ids assigned by
+`CIRLowering`); a mismatch is a failure, which defeats a producer that
+splices in a graph from a different program and fixes up the hashes.
+When the chimera package cannot be imported, the graph-source link is
+NOT RE-DERIVED: the verifier checks internal consistency only, reports
+the link status, and never reports valid for a certificate claiming
+`enforced`. `chimera verify` prints the link status (`RE-DERIVED` /
+`NOT RE-DERIVED` / `N/A` for v1).
+
+### strict_guard is producer-asserted, not source-derivable
+
+The `strict_guard` flag in the v2 certificate is asserted by the
+producer: it records the `strict_guard` argument passed to `run_cir`
+(or `--strict-guard` on the CLI). It is not derivable from
+`cir.program_source`, because the source language has no strictness
+modifier; strictness is a run-time executor option. The verifier's
+re-derivation therefore cannot independently confirm that the run
+actually executed with strict guards on. It can only confirm that
+*if* the producer's assertion is true, the `enforced` claim follows
+from (dominance holds AND strict_guard asserted).
+
+This is a deliberate limitation, not a bug, but the word `enforced`
+overstates what the certificate proves. Two options, neither
+implemented yet (the claim is unchanged):
+
+**Option 1: rename the claim.** Change `enforced` to a name that
+marks the producer assertion, e.g. `dominated-strict-asserted`.
+- Syntax: none.
+- Lowering: none (the dominance pass is unchanged).
+- Verifier: expect the new claim string in
+  `_expected_dominance_claim`; the predicate (dominated AND asserted
+  strict_guard) is unchanged. Update `certify.py:dominance_claim`,
+  the CLI output text, and docs.
+
+**Option 2: source-level strict guard modifier.** Add strictness to
+the language, e.g. `guard x against hallucination { max_risk: 0.2,
+strict: true }`, so the flag is part of the program source and thus
+re-derivable by the verifier.
+- Syntax: new optional `strict` field on `guard_stmt` in
+  `docs/grammar.ebnf`; parser support in `_parse_guard`.
+- Lowering: store `strict` on `ValidationNode`; the executor's
+  `_exec_validation` consults the per-guard flag (threaded from the
+  node) in addition to or instead of the run-time `strict_guard`
+  argument. The dominance pass is unchanged.
+- Verifier: the strict flag is now in the re-derived graph, so the
+  `enforced` claim becomes fully source-derivable with no producer
+  assertion; `certify_cir` reads it from the graph instead of taking
+  a `strict_guard` argument.
 
 ## 4. Red tests
 
@@ -318,31 +368,53 @@ URLs. Every novelty claim below is marked **unverified**.
   definition in section 1.1 is analogous to an effect row with two
   labels (model re-query, belief output).
 
-## Product decisions needed
+## Product decisions (CHOSEN)
 
-1. Reject with `LoweringError`, or warn with an opt-in strict flag?
-   (section 6)
-2. Option A, B, or C for uncalibrated posteriors at numeric guard
-   thresholds? (section 2)
-3. Is the guard-before-resolve conservatism (falsifier) acceptable, or
-   should validation of all sources imply validation of the consensus?
-   (section 5)
-4. Should dominance interact with `strict_guard` (e.g., a combined
-   "dominated and strict" mode for high-stakes programs)? (section 6)
-5. Certificate format: new `chimeralang-cert/v2` envelope, or a `cir`
-   section inside v1? (section 3)
-6. Scope: does `emit` count as effectful for this check, or only
-   `EvolutionNode`? (section 1.1; including emit makes nearly every
-   existing program fail the check until guards are added)
+1. CHOSEN: lowering warning by default; `run_cir(require_dominance=True)`
+   and CLI `--require-dominance` make it a `LoweringError`.
+2. CHOSEN: Option A for `mean`/`both` guards combined with Option B's
+   attestation everywhere. Under `require_dominance`, a `mean`/`both`
+   guard with no calibrator is a `LoweringError`; `score_source`
+   (`calibrated`/`uncalibrated`) is recorded on every validation trace
+   entry and in the certificate.
+3. CHOSEN: guard-before-resolve is not accepted as dominating the
+   consensus. Documented as intentional conservatism.
+4. CHOSEN: `strict_guard` is recorded in the certificate. The claim is
+   `enforced` only when dominance holds AND `strict_guard` was on;
+   otherwise `non-blocking` (dominated) or `absent` (undominated).
+5. CHOSEN: new `chimeralang-cert/v2` envelope with a `cir` section.
+   `verify.py` fails closed on unknown versions and verifies v1
+   unchanged.
+6. CHOSEN: effectful nodes are `EvolutionNode` and `emit`
+   (`InquiryNode` is a source, so the requirement is vacuous for it).
 
-## What was not verified
+## What was verified, and what was not
 
-- Which existing programs under `examples/`, `tests/`, and
-  `experiments/` would newly fail the dominance check (no audit run).
-- Whether the verifier's graph-embedding keeps `verify.py`'s stdlib-only
-  contract for realistic graph sizes (no sizing experiment).
+Verified during implementation:
+- The dominance audit: 11 `.chimera` files across examples/, tests/,
+  experiments/ scanned; 0 undominated effectful nodes. Only
+  `examples/belief_reasoning.chimera` uses the CIR belief surface.
+- Certificate sizing: embedded graph section ~1.5KB (10 nodes),
+  ~12KB (100 nodes), ~121KB (1000 nodes); dominance recompute
+  0.07ms/0.33ms/3.34ms. `verify.py` stays stdlib-only at import time.
+- The lowering pass runs between `_pass_structural` and
+  `_pass_dead_belief_elimination` (`lower.py`).
+- Graph-source forgery: a red test splices a dominated graph into an
+  unguarded program's certificate with all hashes fixed up; the
+  verifier rejected it only after re-derivation was added
+  (`test_verifier_rejects_forged_graph_source_mismatch`).
+- Differential test: lowering, certify, and verifier dominance
+  implementations agree on all examples, fixture programs, and 200
+  seeded random programs (196 with effectful consumers).
+- NOT RE-DERIVED path: simulated missing chimera import; link status
+  reported, `enforced` claim never valid
+  (`test_not_rederived_never_valid_with_enforced`).
+
+Not verified:
 - Any prior art beyond the three sources in section 7; all novelty
-  claims are marked unverified.
-- The exact lowering-pass insertion point and its interaction with
-  `_pass_dead_belief_elimination` (a dominance pass must run before
-  elimination or account for removed nodes).
+  claims remain marked unverified.
+- The verifier's behavior on adversarially large embedded graphs
+  (no fuzzing run).
+- Whether `belief_reasoning.chimera`'s `strategy: both` guard should
+  be changed to `variance` or given a checked-in calibrator so it
+  passes `--require-dominance` out of the box (left unmodified).

@@ -1,11 +1,35 @@
 """Independent, offline verifier for ChimeraLang certificates.
 
-This module is deliberately self-contained: it imports ONLY the Python
+This module is self-contained at import time: it imports ONLY the Python
 standard library (plus a lazy, feature-detected `cryptography` import inside
-the signature check). It does not import any part of the ChimeraLang
-execution path (vm/parser/lexer/detect/integrity); all recomputation logic
-(canonical encoding, chain hashing, gate hashing, verdict) is re-derived
-here from the certificate alone. A test enforces this independence.
+the signature check). For v2 CIR certificates it *attempts* to import the
+chimera parser and lowering lazily, inside the verification function, to
+re-derive the graph from cir.program_source. If that import fails, the
+graph-source link is reported NOT RE-DERIVED and the guarantee degrades
+(see trust boundary below); the module never requires chimera at import.
+
+Two formats are understood, and anything else fails closed:
+  - chimeralang-cert/v1: VM-path certificates (IntegrityReport).
+  - chimeralang-cert/v2: CIR certificates (chimera.cir.certify). The v2
+    verifier recomputes the dominance predicate from the embedded graph
+    structure and never trusts a stored dominance flag.
+
+Trust boundary for v2, stated exactly:
+  - When the chimera package is importable, the verifier re-lowers
+    cir.program_source with the real parser and lowering, and compares
+    the canonical serialized graph byte for byte to the embedded graph
+    (node ids are deterministic creation-order ids assigned by
+    CIRLowering). A mismatch is a failure. The verifier then recomputes
+    the dominance predicate from the re-derived graph and requires the
+    stored claim to match. In this state the certificate proves: the
+    source is unmodified (program_hash), the graph is unmodified
+    (graph_hash), the graph is exactly the lowering of the source, and
+    the dominance claim is correct.
+  - When the chimera package cannot be imported, the graph-source link
+    is NOT RE-DERIVED: the verifier checks internal consistency only
+    (hashes, dominance recomputed from the embedded graph), reports
+    "graph-source link: NOT RE-DERIVED", and never reports valid for a
+    certificate whose stored dominance claim is "enforced".
 
 Guarantees, stated precisely:
   - certificate_hash binding = tamper-evidence. It binds every report field
@@ -45,13 +69,46 @@ class VerificationResult:
     checks_run: int = 0
     verdict_recomputed: str = ""
     signature_status: str = "absent"  # valid|invalid|absent|unavailable|unverified
+    # v2 graph-source link: "RE-DERIVED" when the embedded graph was
+    # shown to match a fresh lowering of cir.program_source,
+    # "NOT RE-DERIVED" when the chimera package could not be imported
+    # (v1 certificates report "N/A").
+    link_status: str = "N/A"
 
 
 class CertificateVerifier:
-    """Verifies a certificate dict produced by IntegrityReport.to_certificate."""
+    """Verifies a certificate dict produced by IntegrityReport.to_certificate
+    (v1) or chimera.cir.certify.certify_cir (v2)."""
+
+    #: Certificate formats this verifier understands. Anything else fails
+    #: closed: an unknown version is never treated as valid.
+    KNOWN_FORMATS = frozenset({"chimeralang-cert/v1", "chimeralang-cert/v2"})
 
     @staticmethod
     def verify(
+        certificate: dict,
+        *,
+        hmac_key: bytes | None = None,
+        pubkey_hex: str | None = None,
+    ) -> VerificationResult:
+        fmt = certificate.get("format") if isinstance(certificate, dict) else None
+        if fmt not in CertificateVerifier.KNOWN_FORMATS:
+            return VerificationResult(
+                valid=False,
+                failures=[f"version: unknown certificate format {fmt!r}; "
+                          f"failing closed"],
+                checks_run=1,
+                verdict_recomputed="",
+                signature_status="absent",
+            )
+        if fmt == "chimeralang-cert/v2":
+            return CertificateVerifier._verify_v2(
+                certificate, hmac_key=hmac_key, pubkey_hex=pubkey_hex)
+        return CertificateVerifier._verify_v1(
+            certificate, hmac_key=hmac_key, pubkey_hex=pubkey_hex)
+
+    @staticmethod
+    def _verify_v1(
         certificate: dict,
         *,
         hmac_key: bytes | None = None,
@@ -213,6 +270,224 @@ class CertificateVerifier:
             checks_run=checks_run,
             verdict_recomputed=verdict_recomputed,
             signature_status=signature_status,
+        )
+
+    # ------------------------------------------------------------------
+    # v2: CIR certificates (chimera.cir.certify.certify_cir)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _rederive_graph(source: str) -> tuple:
+        """Re-lower cir.program_source with the real parser and lowering.
+
+        Returns (canonical_bytes, error). canonical_bytes is the
+        canonical JSON encoding of the serialized re-derived graph, or
+        None when the chimera package cannot be imported or the source
+        does not parse/lower. The import is attempted lazily so this
+        module stays usable (with a degraded guarantee) where chimera
+        is unavailable. Node ids are deterministic (creation order in
+        CIRLowering), so the bytes are directly comparable to the
+        embedded graph's canonical encoding.
+        """
+        try:
+            from chimera.lexer import Lexer
+            from chimera.parser import Parser
+            from chimera.cir.lower import CIRLowering
+            from chimera.cir.certify import serialize_graph, _canonical_bytes
+        except ImportError as e:
+            return None, f"chimera package not importable ({e})"
+        try:
+            program = Parser(Lexer(source).tokenize()).parse()
+        except Exception as e:
+            return None, f"program_source does not parse ({e})"
+        try:
+            graph = CIRLowering().lower(program)
+        except Exception as e:
+            return None, f"program_source does not lower ({e})"
+        return _canonical_bytes(serialize_graph(graph)), ""
+
+    @staticmethod
+    def _recompute_dominance(graph: dict) -> tuple[bool, list[dict]]:
+        """Independently recompute dominance from the embedded graph.
+
+        Standalone reimplementation operating only on the serialized
+        structure. Never trusts a stored flag or stored evidence.
+        """
+        kinds = {n["id"]: n["kind"] for n in graph.get("nodes", [])}
+        preds: dict[str, list[str]] = {}
+        for e in graph.get("edges", []):
+            preds.setdefault(e["target_id"], []).append(e["source_id"])
+        consensus = {nid for nid, k in kinds.items()
+                     if k == "ConsensusNode"}
+
+        def dominated(consumer_id: str) -> bool:
+            paths: list[list[str]] = []
+            stack = [(consumer_id, [consumer_id], {consumer_id})]
+            while stack:
+                nid, path, seen = stack.pop()
+                ps = [p for p in preds.get(nid, []) if p not in seen]
+                if not ps:
+                    paths.append(list(reversed(path)))
+                    continue
+                for p in ps:
+                    stack.append((p, path + [p], seen | {p}))
+            if not paths:
+                return False
+            for path in paths:
+                last_cons = -1
+                for i, nid in enumerate(path):
+                    if nid in consensus:
+                        last_cons = i
+                if not any(kinds.get(nid) == "ValidationNode"
+                           and i > last_cons
+                           for i, nid in enumerate(path)):
+                    return False
+            return True
+
+        evidence: list[dict] = []
+        all_ok = True
+        consumers = (
+            [n["id"] for n in graph.get("nodes", [])
+             if n["kind"] == "EvolutionNode"]
+            + [eid for eid in graph.get("emit_ids", []) if eid in kinds]
+        )
+        for cid in consumers:
+            ok = dominated(cid)
+            evidence.append({"consumer": cid, "dominated": ok})
+            all_ok = all_ok and ok
+        return all_ok, evidence
+
+    @staticmethod
+    def _expected_dominance_claim(dominated: bool, strict_guard: bool) -> str:
+        if dominated and strict_guard:
+            return "enforced"
+        if dominated:
+            return "non-blocking"
+        return "absent"
+
+    @staticmethod
+    def _verify_v2(
+        certificate: dict,
+        *,
+        hmac_key: bytes | None = None,
+        pubkey_hex: str | None = None,
+    ) -> VerificationResult:
+        failures: list[str] = []
+        checks_run = 0
+        signature_status = "absent"
+
+        # --- Check 1: envelope ------------------------------------------
+        checks_run += 1
+        cir = certificate.get("cir") if isinstance(certificate, dict) else None
+        binding = (certificate.get("binding")
+                   if isinstance(certificate, dict) else None)
+        if not isinstance(cir, dict):
+            failures.append("format: missing or invalid 'cir' object")
+        if not isinstance(binding, dict):
+            failures.append("format: missing or invalid 'binding' object")
+        if not isinstance(cir, dict) or not isinstance(binding, dict):
+            return VerificationResult(
+                valid=False, failures=failures, checks_run=checks_run,
+                verdict_recomputed="", signature_status=signature_status,
+                link_status="N/A")
+
+        cir_bytes = _canonical_bytes(cir)
+
+        # --- Check 2: certificate hash binding ----------------------------
+        checks_run += 1
+        if (hashlib.sha256(cir_bytes).hexdigest()
+                != binding.get("certificate_hash")):
+            failures.append(
+                "binding: certificate_hash mismatch (cir section modified)")
+
+        # --- Check 3: program source binding ------------------------------
+        checks_run += 1
+        source = cir.get("program_source", "")
+        if (hashlib.sha256(source.encode("utf-8")).hexdigest()[:32]
+                != cir.get("program_hash")):
+            failures.append(
+                "cir: program_hash mismatch (program_source modified)")
+
+        # --- Check 4: graph binding ---------------------------------------
+        checks_run += 1
+        graph = cir.get("graph")
+        if not isinstance(graph, dict):
+            failures.append("cir: missing or invalid 'graph' object")
+            graph = {"nodes": [], "edges": [], "emit_ids": []}
+        if (hashlib.sha256(_canonical_bytes(graph)).hexdigest()[:32]
+                != cir.get("graph_hash")):
+            failures.append("cir: graph_hash mismatch (graph modified)")
+
+        # --- Check 5: dominance recomputation ------------------------------
+        # Recomputed from the embedded graph structure. The stored claim
+        # and stored evidence are never trusted.
+        checks_run += 1
+        dominated, _evidence = (
+            CertificateVerifier._recompute_dominance(graph))
+        expected_claim = CertificateVerifier._expected_dominance_claim(
+            dominated, bool(cir.get("strict_guard")))
+        stored_claim = (cir.get("dominance") or {}).get("claim")
+        if stored_claim != expected_claim:
+            failures.append(
+                f"dominance: stored claim {stored_claim!r} does not match "
+                f"recomputed {expected_claim!r} (dominated={dominated})")
+
+        # --- Check 5b: graph-source link ----------------------------------
+        # Re-lower cir.program_source with the real parser and lowering
+        # and compare the canonical serialized graph byte for byte with
+        # the embedded graph. Node ids are deterministic (creation
+        # order), so equality is exact. This defeats a producer that
+        # splices in a graph from a different program and fixes up the
+        # hashes.
+        checks_run += 1
+        link_status = "RE-DERIVED"
+        rederived_bytes, re_err = CertificateVerifier._rederive_graph(source)
+        if rederived_bytes is None:
+            link_status = "NOT RE-DERIVED"
+            failures.append(f"graph-source link: NOT RE-DERIVED ({re_err})")
+            if stored_claim == "enforced":
+                failures.append(
+                    "graph-source link: NOT RE-DERIVED, so an 'enforced' "
+                    "claim can never be reported valid")
+        elif rederived_bytes != _canonical_bytes(graph):
+            failures.append(
+                "graph-source link: re-derived graph does not match the "
+                "embedded graph (program_source and graph are inconsistent)")
+
+        # --- Check 6: HMAC --------------------------------------------------
+        if hmac_key is not None:
+            checks_run += 1
+            stored_hmac = binding.get("hmac")
+            if not stored_hmac:
+                failures.append("hmac: key supplied but certificate has no HMAC")
+            elif not hmac.compare_digest(
+                    hmac.new(hmac_key, cir_bytes,
+                             hashlib.sha256).hexdigest(),
+                    str(stored_hmac)):
+                failures.append("hmac: authentication failed")
+
+        # --- Check 7: signature ----------------------------------------------
+        checks_run += 1
+        signature = binding.get("signature")
+        if signature is None:
+            if pubkey_hex is not None:
+                failures.append(
+                    "signature: pubkey requested but certificate is unsigned")
+        elif not isinstance(signature, dict):
+            signature_status = "invalid"
+            failures.append("signature: binding.signature is not an object")
+        else:
+            signature_status, sig_failures = _verify_signature(
+                signature, cir_bytes, pubkey_hex)
+            failures.extend(sig_failures)
+
+        return VerificationResult(
+            valid=(len(failures) == 0),
+            failures=failures,
+            checks_run=checks_run,
+            verdict_recomputed="",
+            signature_status=signature_status,
+            link_status=link_status,
         )
 
 

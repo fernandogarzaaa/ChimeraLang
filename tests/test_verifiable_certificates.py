@@ -236,17 +236,39 @@ def test_malformed_certificate_fails_without_crashing(mutate):
 
 
 def test_verifier_is_independent():
+    import ast
+    import inspect
     import chimera.verify
+    from chimera.verify import CertificateVerifier
 
     src = inspect.getsource(chimera.verify)
-    for banned in (
-        "chimera.vm",
-        "chimera.parser",
-        "chimera.lexer",
-        "chimera.detect",
-        "chimera.integrity",
-    ):
+    tree = ast.parse(src)
+
+    # 1. No import-time dependency on chimera: top-level imports must
+    #    not reference chimera modules.
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                assert not a.name.startswith("chimera"), (
+                    f"verify.py must not import {a.name} at top level")
+        elif isinstance(node, ast.ImportFrom):
+            assert not (node.module or "").startswith("chimera"), (
+                f"verify.py must not import {node.module} at top level")
+
+    # 2. The chimera execution path (vm/detect/integrity) is never
+    #    referenced, even lazily.
+    for banned in ("chimera.vm", "chimera.detect", "chimera.integrity"):
         assert banned not in src, f"verify.py must not reference {banned}"
+
+    # 3. The only chimera imports allowed are the lazy, ImportError-guarded
+    #    ones inside _rederive_graph (graph-source re-derivation), which
+    #    degrade gracefully when chimera is unavailable.
+    rederive_src = inspect.getsource(CertificateVerifier._rederive_graph)
+    assert "except ImportError" in rederive_src
+    for mod in ("chimera.lexer", "chimera.parser", "chimera.cir.lower"):
+        assert mod in rederive_src, f"{mod} should be in _rederive_graph"
+        assert src.count(mod) == rederive_src.count(mod), (
+            f"{mod} referenced outside _rederive_graph")
 
 
 def test_to_dict_default_unchanged():

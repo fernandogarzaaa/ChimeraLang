@@ -1,0 +1,21 @@
+// guarded_pipeline.chimera
+//
+// Canonical guard-dominated CIR pipeline: every effectful node (evolve,
+// emit) is dominated by a validation node on its belief lineage.
+// Passes `chimera run --require-dominance` cleanly.
+//
+// Note: strategy variance is used so the program passes --require-dominance
+// without a calibrator file. A mean/both guard under --require-dominance
+// requires --calibrator=<path> (see decision 2 in
+// docs/design/guard-dominance.md).
+
+belief sky := inquire {
+  prompt: "Is the sky blue on a clear day?",
+  agents: [claude]
+}
+
+guard sky against hallucination { max_risk: 0.3, strategy: variance, max_variance: 0.02 }
+
+evolve sky until stable { max_iter: 3 }
+
+emit sky

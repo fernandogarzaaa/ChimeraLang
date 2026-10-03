@@ -50,6 +50,11 @@ class CIRResult:
     calibrated: dict[str, float] = field(default_factory=dict)
     trace: list[str] = field(default_factory=list)
     guard_violations: list[str] = field(default_factory=list)
+    # Structured per-guard record, one entry per ValidationNode executed:
+    # {"belief", "strategy", "max_risk", "max_variance", "score_source",
+    #  "score", "passed", "violations"}. score_source is "calibrated" when
+    # the guard judged calibrated_p, else "uncalibrated".
+    validations: list[dict] = field(default_factory=list)
     evolution_iters: int = 0
     converged: bool = True
     duration_ms: float = 0.0
@@ -411,6 +416,8 @@ class CIRExecutor:
         # about the missing calibrator).
         score = bs.calibrated_p if bs.calibrated_p is not None else dist.mean
         score_label = "calibrated_p" if bs.calibrated_p is not None else "mean"
+        score_source = ("calibrated" if bs.calibrated_p is not None
+                        else "uncalibrated")
 
         if node.strategy in ("mean", "both"):
             required_mean = 1.0 - node.max_risk
@@ -433,12 +440,33 @@ class CIRExecutor:
             msg = f"guard '{bs.name}' FAILED: {'; '.join(violations)}"
             result.trace.append(f"[guard] VIOLATION — {msg}")
             result.guard_violations.append(msg)
+            result.validations.append({
+                "belief": bs.name,
+                "strategy": node.strategy,
+                "max_risk": node.max_risk,
+                "max_variance": node.max_variance,
+                "score_source": score_source,
+                "score": score,
+                "passed": False,
+                "violations": list(violations),
+            })
             if self._strict:
                 raise GuardViolation(msg)
         else:
             result.trace.append(
-                f"[guard] PASSED — {score_label}={score:.3f} variance={dist.variance:.4f}"
+                f"[guard] PASSED — {score_label}={score:.3f} "
+                f"variance={dist.variance:.4f} score_source={score_source}"
             )
+            result.validations.append({
+                "belief": bs.name,
+                "strategy": node.strategy,
+                "max_risk": node.max_risk,
+                "max_variance": node.max_variance,
+                "score_source": score_source,
+                "score": score,
+                "passed": True,
+                "violations": [],
+            })
             bs.node_id = node.id
 
     def _origin_inquiry(

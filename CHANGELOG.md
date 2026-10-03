@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Static guard-dominance check.** New `_pass_guard_dominance` lowering
+  pass (between structural and dead-belief elimination): every
+  effectful consumer (`evolve` node, `emit` target) must be dominated
+  by a validation node on its belief lineage, positioned after any
+  `resolve`. Default is a lowering warning; `run_cir(...,
+  require_dominance=True)` and CLI `--require-dominance` make it a
+  `LoweringError`. Under `require_dominance`, `mean`/`both` guards
+  without a calibrator are also `LoweringError`s.
+- **Guard score provenance.** Every guard trace entry records
+  `score_source` (`calibrated` when `calibrated_p` was judged, else
+  `uncalibrated`), and `CIRResult.validations` carries the structured
+  per-guard record.
+- **CIR certificates (chimeralang-cert/v2).** `chimera.cir.certify.certify_cir`
+  builds a v2 envelope with a `cir` section (program source/hash,
+  lowered graph/hash, dominance claim `enforced`/`non-blocking`/`absent`,
+  validations with `score_source`, `strict_guard` flag). CLI
+  `--cert-out=PATH` writes one; `chimera verify` recomputes dominance
+  from the embedded graph via an independent stdlib-only
+  implementation and never trusts the stored claim. Unknown versions
+  fail closed; v1 verification is unchanged.
+- **Example:** `examples/guarded_pipeline.chimera`, a canonical
+  guard-dominated pipeline passing `--require-dominance`.
+
 - **Agreement resolve strategy with opt-in calibration.** `resolve` now
   accepts `strategy: agreement` (the default when a belief has more
   than one source with answers), `strategy: pooled` (the Stage 2 Beta
