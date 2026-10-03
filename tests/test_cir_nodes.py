@@ -51,6 +51,25 @@ class TestBetaDist:
         decayed = b.decay(factor=0.5)
         assert decayed.mean < b.mean
 
+    def test_combine_pseudocount_no_saturation_clamp(self):
+        """Five 0.95 sources at the shipped strength 10 must not pool to 1.0.
+
+        RED: the (alpha+alpha'-1, beta+beta'-1) rule drives the raw beta
+        to zero then negative (0.5+0.5-1.0 = 0.0, then -0.5 three
+        times) and the max(., 1e-6) clamp hides it, so the pooled mean
+        saturates at exactly 1.0. See the H1 erratum: even at the
+        shipped strength 10 the combination saturates for high
+        confidences.
+        """
+        d = None
+        for _ in range(5):
+            b = BetaDist.from_confidence(0.95, strength=10.0)
+            d = b if d is None else d.combine_pseudocount(b)
+        assert d.mean < 0.999, (
+            f"pooled mean saturated at {d.mean}: raw beta went "
+            "non-positive and the 1e-6 clamp hid it"
+        )
+
 
 class TestBeliefState:
     def test_creation(self):
