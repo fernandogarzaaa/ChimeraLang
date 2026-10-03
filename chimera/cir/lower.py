@@ -39,11 +39,25 @@ class CIRLowering:
         self._require_dominance = require_dominance
         self._calibrator = calibrator
         self.priors_seeded: list[str] = []
+        self._id_counter = 0
+
+    def _next_id(self) -> str:
+        """Deterministic node id in creation order.
+
+        Two lowerings of the same source assign identical ids, so the
+        serialized graph is byte-for-byte comparable (used by the v2
+        certificate verifier). The CIRNode dataclass default (uuid4)
+        is unchanged for nodes constructed outside lowering.
+        """
+        nid = f"n{self._id_counter:04d}"
+        self._id_counter += 1
+        return nid
 
     def lower(self, program: object) -> CIRGraph:
         graph = CIRGraph()
         self.warnings = []
         self.priors_seeded = []
+        self._id_counter = 0
 
         self._pass_structural(program, graph)
         self._pass_guard_dominance(graph)
@@ -102,6 +116,7 @@ class CIRLowering:
                 seen_names: set[str] = set()
                 for i, agent in enumerate(per_agent):
                     inq = InquiryNode(
+                        id=self._next_id(),
                         prompt=prompt,
                         agents=[agent] if agent else [],
                         ttl=ttl,
@@ -150,6 +165,7 @@ class CIRLowering:
                     )
                     strategy = "pooled"
                 cons = ConsensusNode(
+                    id=self._next_id(),
                     threshold=decl.threshold,
                     strategy=strategy,
                     input_ids=list(source_ids),
@@ -166,6 +182,7 @@ class CIRLowering:
                 source_ids = belief_node_map.get(decl.target, [])
                 source_id = self._first_source_or_warn(decl.target, source_ids, "guard")
                 val = ValidationNode(
+                    id=self._next_id(),
                     max_risk=decl.max_risk,
                     strategy=decl.strategy,
                     target_id=source_id,
@@ -183,6 +200,7 @@ class CIRLowering:
                 source_ids = belief_node_map.get(decl.target, [])
                 source_id = self._first_source_or_warn(decl.target, source_ids, "evolve")
                 evo = EvolutionNode(
+                    id=self._next_id(),
                     condition=decl.condition,
                     max_iter=decl.max_iter,
                     subgraph_entry=source_id,

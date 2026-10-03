@@ -17,13 +17,14 @@ Two formats are understood, and anything else fails closed:
 Trust boundary for v2, stated exactly:
   - When the chimera package is importable, the verifier re-lowers
     cir.program_source with the real parser and lowering, and compares
-    the ID-insensitive canonical graph shape to the embedded graph. A
-    mismatch is a failure. The verifier then recomputes the dominance
-    predicate from the re-derived graph and requires the stored claim
-    to match. In this state the certificate proves: the source is
-    unmodified (program_hash), the graph is unmodified (graph_hash),
-    the graph is the canonical lowering of the source, and the
-    dominance claim is correct.
+    the canonical serialized graph byte for byte to the embedded graph
+    (node ids are deterministic creation-order ids assigned by
+    CIRLowering). A mismatch is a failure. The verifier then recomputes
+    the dominance predicate from the re-derived graph and requires the
+    stored claim to match. In this state the certificate proves: the
+    source is unmodified (program_hash), the graph is unmodified
+    (graph_hash), the graph is exactly the lowering of the source, and
+    the dominance claim is correct.
   - When the chimera package cannot be imported, the graph-source link
     is NOT RE-DERIVED: the verifier checks internal consistency only
     (hashes, dominance recomputed from the embedded graph), reports
@@ -279,17 +280,20 @@ class CertificateVerifier:
     def _rederive_graph(source: str) -> tuple:
         """Re-lower cir.program_source with the real parser and lowering.
 
-        Returns (graph_dict, error). graph_dict is the serialized
-        lowered graph, or None when the chimera package cannot be
-        imported or the source does not parse/lower. The import is
-        attempted lazily so this module stays usable (with a degraded
-        guarantee) where chimera is unavailable.
+        Returns (canonical_bytes, error). canonical_bytes is the
+        canonical JSON encoding of the serialized re-derived graph, or
+        None when the chimera package cannot be imported or the source
+        does not parse/lower. The import is attempted lazily so this
+        module stays usable (with a degraded guarantee) where chimera
+        is unavailable. Node ids are deterministic (creation order in
+        CIRLowering), so the bytes are directly comparable to the
+        embedded graph's canonical encoding.
         """
         try:
             from chimera.lexer import Lexer
             from chimera.parser import Parser
             from chimera.cir.lower import CIRLowering
-            from chimera.cir.certify import serialize_graph
+            from chimera.cir.certify import serialize_graph, _canonical_bytes
         except ImportError as e:
             return None, f"chimera package not importable ({e})"
         try:
@@ -300,66 +304,7 @@ class CertificateVerifier:
             graph = CIRLowering().lower(program)
         except Exception as e:
             return None, f"program_source does not lower ({e})"
-        return serialize_graph(graph), ""
-
-    @staticmethod
-    def _canonical_shape(graph_dict: dict) -> str:
-        """ID-insensitive canonical shape of a serialized graph.
-
-        Weisfeiler-Lehman label refinement over the DAG: each node's
-        label starts as its kind plus parameters (IDs excluded) and is
-        iteratively refined with its predecessors' and successors'
-        labels. The shape is the sorted multiset of node labels plus
-        the sorted multiset of (source label, target label, edge kind).
-        Two lowerings of the same source produce identical shapes
-        despite random node IDs; structurally different graphs differ.
-        """
-        nodes = graph_dict.get("nodes", []) or []
-        edges = graph_dict.get("edges", []) or []
-        ids = {n["id"] for n in nodes}
-        preds: dict[str, list[str]] = {nid: [] for nid in ids}
-        succs: dict[str, list[str]] = {nid: [] for nid in ids}
-        for e in edges:
-            s, t = e.get("source_id"), e.get("target_id")
-            if s in ids and t in ids:
-                succs[s].append(t)
-                preds[t].append(s)
-
-        def initial(n: dict) -> str:
-            # Exclude node-ID references (target_id, subgraph_entry,
-            # input_ids): they are random per lowering and redundant
-            # with the edge structure, which WL already captures.
-            params = {k: v for k, v in n.items()
-                      if k not in ("id", "target_id", "subgraph_entry",
-                                   "input_ids")}
-            return json.dumps(params, sort_keys=True, default=str)
-
-        labels = {n["id"]: initial(n) for n in nodes}
-        for _ in range(len(nodes) + 1):
-            refined = {}
-            for n in nodes:
-                nid = n["id"]
-                refined[nid] = (
-                    labels[nid]
-                    + "|P:" + ",".join(sorted(labels[p] for p in preds[nid]))
-                    + "|S:" + ",".join(sorted(labels[s] for s in succs[nid]))
-                )
-            if refined == labels:
-                break
-            labels = refined
-        node_ms = sorted(labels[n["id"]] for n in nodes)
-        edge_ms = sorted(
-            (labels[e["source_id"]], labels[e["target_id"]],
-             str(e.get("kind")))
-            for e in edges
-            if e.get("source_id") in labels and e.get("target_id") in labels
-        )
-        emit_ms = sorted(
-            labels[eid] for eid in (graph_dict.get("emit_ids", []) or [])
-            if eid in labels)
-        return json.dumps(
-            {"nodes": node_ms, "edges": edge_ms, "emit": emit_ms},
-            sort_keys=True)
+        return _canonical_bytes(serialize_graph(graph)), ""
 
     @staticmethod
     def _recompute_dominance(graph: dict) -> tuple[bool, list[dict]]:
@@ -489,21 +434,22 @@ class CertificateVerifier:
 
         # --- Check 5b: graph-source link ----------------------------------
         # Re-lower cir.program_source with the real parser and lowering
-        # and compare the canonical (ID-insensitive) graph shape to the
-        # embedded graph. This defeats a producer that splices in a
-        # graph from a different program and fixes up the hashes.
+        # and compare the canonical serialized graph byte for byte with
+        # the embedded graph. Node ids are deterministic (creation
+        # order), so equality is exact. This defeats a producer that
+        # splices in a graph from a different program and fixes up the
+        # hashes.
         checks_run += 1
         link_status = "RE-DERIVED"
-        rederived, re_err = CertificateVerifier._rederive_graph(source)
-        if rederived is None:
+        rederived_bytes, re_err = CertificateVerifier._rederive_graph(source)
+        if rederived_bytes is None:
             link_status = "NOT RE-DERIVED"
             failures.append(f"graph-source link: NOT RE-DERIVED ({re_err})")
             if stored_claim == "enforced":
                 failures.append(
                     "graph-source link: NOT RE-DERIVED, so an 'enforced' "
                     "claim can never be reported valid")
-        elif (CertificateVerifier._canonical_shape(rederived)
-                != CertificateVerifier._canonical_shape(graph)):
+        elif rederived_bytes != _canonical_bytes(graph):
             failures.append(
                 "graph-source link: re-derived graph does not match the "
                 "embedded graph (program_source and graph are inconsistent)")

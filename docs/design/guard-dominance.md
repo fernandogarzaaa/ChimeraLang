@@ -162,15 +162,55 @@ attestation is therefore new machinery, not an extension:
 
 **Trust boundary, stated exactly.** The v2 verifier additionally
 re-lowers `cir.program_source` with the real parser and lowering and
-compares the ID-insensitive canonical graph shape
-(Weisfeiler-Lehman label refinement, `verify.py:_canonical_shape`)
-to the embedded graph; a mismatch is a failure, which defeats a
-producer that splices in a graph from a different program and fixes
-up the hashes. When the chimera package cannot be imported, the
-graph-source link is NOT RE-DERIVED: the verifier checks internal
-consistency only, reports the link status, and never reports valid
-for a certificate claiming `enforced`. `chimera verify` prints the
-link status (`RE-DERIVED` / `NOT RE-DERIVED` / `N/A` for v1).
+compares the canonical serialized graph byte for byte to the embedded
+graph (node ids are deterministic creation-order ids assigned by
+`CIRLowering`); a mismatch is a failure, which defeats a producer that
+splices in a graph from a different program and fixes up the hashes.
+When the chimera package cannot be imported, the graph-source link is
+NOT RE-DERIVED: the verifier checks internal consistency only, reports
+the link status, and never reports valid for a certificate claiming
+`enforced`. `chimera verify` prints the link status (`RE-DERIVED` /
+`NOT RE-DERIVED` / `N/A` for v1).
+
+### strict_guard is producer-asserted, not source-derivable
+
+The `strict_guard` flag in the v2 certificate is asserted by the
+producer: it records the `strict_guard` argument passed to `run_cir`
+(or `--strict-guard` on the CLI). It is not derivable from
+`cir.program_source`, because the source language has no strictness
+modifier; strictness is a run-time executor option. The verifier's
+re-derivation therefore cannot independently confirm that the run
+actually executed with strict guards on. It can only confirm that
+*if* the producer's assertion is true, the `enforced` claim follows
+from (dominance holds AND strict_guard asserted).
+
+This is a deliberate limitation, not a bug, but the word `enforced`
+overstates what the certificate proves. Two options, neither
+implemented yet (the claim is unchanged):
+
+**Option 1: rename the claim.** Change `enforced` to a name that
+marks the producer assertion, e.g. `dominated-strict-asserted`.
+- Syntax: none.
+- Lowering: none (the dominance pass is unchanged).
+- Verifier: expect the new claim string in
+  `_expected_dominance_claim`; the predicate (dominated AND asserted
+  strict_guard) is unchanged. Update `certify.py:dominance_claim`,
+  the CLI output text, and docs.
+
+**Option 2: source-level strict guard modifier.** Add strictness to
+the language, e.g. `guard x against hallucination { max_risk: 0.2,
+strict: true }`, so the flag is part of the program source and thus
+re-derivable by the verifier.
+- Syntax: new optional `strict` field on `guard_stmt` in
+  `docs/grammar.ebnf`; parser support in `_parse_guard`.
+- Lowering: store `strict` on `ValidationNode`; the executor's
+  `_exec_validation` consults the per-guard flag (threaded from the
+  node) in addition to or instead of the run-time `strict_guard`
+  argument. The dominance pass is unchanged.
+- Verifier: the strict flag is now in the re-derived graph, so the
+  `enforced` claim becomes fully source-derivable with no producer
+  assertion; `certify_cir` reads it from the graph instead of taking
+  a `strict_guard` argument.
 
 ## 4. Red tests
 
