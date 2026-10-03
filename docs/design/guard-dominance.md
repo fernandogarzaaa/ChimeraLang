@@ -1,10 +1,12 @@
-# Guard dominance: design proposal (2026-10-03)
+# Guard dominance: design and implementation (2026-10-03)
 
-**Status: proposal only. Nothing here is implemented.** The current
-state it builds on is mapped in
-`docs/design/guard-dominance-current-state.md`. This document proposes
-a static check; every section states what would change, with open
-product decisions collected at the end.
+**Status: implemented** on branch `feat/guard-dominance` (PR pending).
+The static check, score provenance, v2 certificates, and independent
+verification described below are implemented and tested
+(`tests/test_guard_dominance.py`, 25 tests). The current state it
+builds on is mapped in
+`docs/design/guard-dominance-current-state.md`. All six product
+decisions are marked CHOSEN below.
 
 ## 0. The check in one paragraph
 
@@ -318,31 +320,43 @@ URLs. Every novelty claim below is marked **unverified**.
   definition in section 1.1 is analogous to an effect row with two
   labels (model re-query, belief output).
 
-## Product decisions needed
+## Product decisions (CHOSEN)
 
-1. Reject with `LoweringError`, or warn with an opt-in strict flag?
-   (section 6)
-2. Option A, B, or C for uncalibrated posteriors at numeric guard
-   thresholds? (section 2)
-3. Is the guard-before-resolve conservatism (falsifier) acceptable, or
-   should validation of all sources imply validation of the consensus?
-   (section 5)
-4. Should dominance interact with `strict_guard` (e.g., a combined
-   "dominated and strict" mode for high-stakes programs)? (section 6)
-5. Certificate format: new `chimeralang-cert/v2` envelope, or a `cir`
-   section inside v1? (section 3)
-6. Scope: does `emit` count as effectful for this check, or only
-   `EvolutionNode`? (section 1.1; including emit makes nearly every
-   existing program fail the check until guards are added)
+1. CHOSEN: lowering warning by default; `run_cir(require_dominance=True)`
+   and CLI `--require-dominance` make it a `LoweringError`.
+2. CHOSEN: Option A for `mean`/`both` guards combined with Option B's
+   attestation everywhere. Under `require_dominance`, a `mean`/`both`
+   guard with no calibrator is a `LoweringError`; `score_source`
+   (`calibrated`/`uncalibrated`) is recorded on every validation trace
+   entry and in the certificate.
+3. CHOSEN: guard-before-resolve is not accepted as dominating the
+   consensus. Documented as intentional conservatism.
+4. CHOSEN: `strict_guard` is recorded in the certificate. The claim is
+   `enforced` only when dominance holds AND `strict_guard` was on;
+   otherwise `non-blocking` (dominated) or `absent` (undominated).
+5. CHOSEN: new `chimeralang-cert/v2` envelope with a `cir` section.
+   `verify.py` fails closed on unknown versions and verifies v1
+   unchanged.
+6. CHOSEN: effectful nodes are `EvolutionNode` and `emit`
+   (`InquiryNode` is a source, so the requirement is vacuous for it).
 
-## What was not verified
+## What was verified, and what was not
 
-- Which existing programs under `examples/`, `tests/`, and
-  `experiments/` would newly fail the dominance check (no audit run).
-- Whether the verifier's graph-embedding keeps `verify.py`'s stdlib-only
-  contract for realistic graph sizes (no sizing experiment).
+Verified during implementation:
+- The dominance audit: 11 `.chimera` files across examples/, tests/,
+  experiments/ scanned; 0 undominated effectful nodes. Only
+  `examples/belief_reasoning.chimera` uses the CIR belief surface.
+- Certificate sizing: embedded graph section ~1.5KB (10 nodes),
+  ~12KB (100 nodes), ~121KB (1000 nodes); dominance recompute
+  0.07ms/0.33ms/3.34ms. `verify.py` stays stdlib-only at top level.
+- The lowering pass runs between `_pass_structural` and
+  `_pass_dead_belief_elimination` (`lower.py`).
+
+Not verified:
 - Any prior art beyond the three sources in section 7; all novelty
-  claims are marked unverified.
-- The exact lowering-pass insertion point and its interaction with
-  `_pass_dead_belief_elimination` (a dominance pass must run before
-  elimination or account for removed nodes).
+  claims remain marked unverified.
+- The verifier's behavior on adversarially large embedded graphs
+  (no fuzzing run).
+- Whether `belief_reasoning.chimera`'s `strategy: both` guard should
+  be changed to `variance` or given a checked-in calibrator so it
+  passes `--require-dominance` out of the box (left unmodified).

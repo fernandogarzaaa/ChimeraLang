@@ -113,6 +113,33 @@ python -m chimera.cli run examples/belief_reasoning.chimera --trace
 chimera: examples/belief_reasoning.chimera — CIR executed in 0.1ms
 ```
 
+### Guard dominance
+
+Every effectful CIR node (`evolve`, `emit`) should be dominated by a
+validation node on its belief lineage: every belief-flow path from a
+source to the node must pass through a `guard` positioned after any
+`resolve`. A guard before a resolve does not dominate the consensus
+(intentional conservatism). By default an undominated effectful node
+produces a lowering warning; `--require-dominance` turns it into a
+`LoweringError`. Under `--require-dominance`, a `mean`/`both` guard
+without a calibrator is also an error (numeric thresholds on
+uncalibrated posterior means are unsound); use `strategy: variance`
+or supply `--calibrator=<path>`.
+
+```bash
+python -m chimera.cli run examples/guarded_pipeline.chimera --require-dominance
+python -m chimera.cli run program.chimera --require-dominance --strict-guard --cert-out=cert.json
+python -m chimera.cli verify cert.json
+```
+
+`--cert-out` writes a `chimeralang-cert/v2` certificate with a `cir`
+section: the program source, the lowered graph, per-guard
+`score_source` (`calibrated`/`uncalibrated`), the `strict_guard` flag,
+and a dominance claim (`enforced` only when dominance holds and
+`strict_guard` was on, else `non-blocking` or `absent`).
+`chimera verify` recomputes dominance from the embedded graph and
+never trusts the stored claim. See `docs/design/guard-dominance.md`.
+
 ### Saving and reusing symbols
 
 ```bash
