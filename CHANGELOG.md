@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Repository hygiene.** Dependabot (uv, pip for `experiments/h1_pooling`,
+  GitHub Actions; weekly), `uv.lock` for reproducible dev installs, and
+  `SECURITY.md` with a private reporting address.
 - **Static guard-dominance check.** New `_pass_guard_dominance` lowering
   pass (between structural and dead-belief elimination): every
   effectful consumer (`evolve` node, `emit` target) must be dominated
