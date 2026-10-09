@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Repository hygiene.** Dependabot (uv, pip for `experiments/h1_pooling`,
+  GitHub Actions; weekly), `uv.lock` for reproducible dev installs, and
+  `SECURITY.md` with a private reporting address.
+
 - **Universal inquiry adapters (`chimera.adapters`).** Any model provider
   can now plug into CIR inquiry: each provider implements
   `chat(model, prompt) -> str`, and `make_adapter` maps agent names to
@@ -20,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Unknown agent or provider names raise `ValueError`; no silent
   fallback. Ten new tests in `tests/test_adapters.py` (no network).
 
+
+
 - **Static guard-dominance check.** New `_pass_guard_dominance` lowering
   pass (between structural and dead-belief elimination): every
   effectful consumer (`evolve` node, `emit` target) must be dominated
@@ -28,10 +34,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   require_dominance=True)` and CLI `--require-dominance` make it a
   `LoweringError`. Under `require_dominance`, `mean`/`both` guards
   without a calibrator are also `LoweringError`s.
+
 - **Guard score provenance.** Every guard trace entry records
   `score_source` (`calibrated` when `calibrated_p` was judged, else
   `uncalibrated`), and `CIRResult.validations` carries the structured
   per-guard record.
+
 - **CIR certificates (chimeralang-cert/v2).** `chimera.cir.certify.certify_cir`
   builds a v2 envelope with a `cir` section (program source/hash,
   lowered graph/hash, dominance claim `enforced`/`non-blocking`/`absent`,
@@ -40,8 +48,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   from the embedded graph via an independent stdlib-only
   implementation and never trusts the stored claim. Unknown versions
   fail closed; v1 verification is unchanged.
+
 - **Example:** `examples/guarded_pipeline.chimera`, a canonical
   guard-dominated pipeline passing `--require-dominance`.
+
 - **Source-level strict guard modifier.** `guard x against hallucination
   { ..., strict: true }` is now part of the language (EBNF, parser,
   `GuardStmt.strict`, `ValidationNode.strict`). A failing strict guard
@@ -54,6 +64,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   re-lowered graph alone and ignores `cir.strict_guard`.
   `examples/strict_guarded_pipeline.chimera` verifies as `enforced`
   via `chimera verify`.
+
 - **Deterministic node ids and exact graph re-derivation.** `CIRLowering`
   assigns node ids in creation order (`n0000`, `n0001`, ...), so two
   lowerings of the same source serialize byte-for-byte identically.
@@ -61,6 +72,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lowering and compares the canonical serialized graph bytes exactly.
   This defeats splice-forgery attacks where a producer pairs an
   unguarded source with a guarded graph and fixes up the hashes.
+
 - **Guard strength and vacuous guard detection.** The `enforced` claim
   is structural only. A new `is_vacuous_guard()` predicate (with
   derivation in code comments) identifies guards that can never fail:
@@ -73,6 +85,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `uncalibrated`, or `nonvacuous` (worst case). The verifier
   recomputes the guard list from the re-derived graph and rejects
   tampering.
+
 - **New verify warnings.** `chimera verify` prints a WARNING line when
   any dominating guard is vacuous ("can never fail; the 'enforced'
   claim is structural only") or uncalibrated ("thresholds are on
