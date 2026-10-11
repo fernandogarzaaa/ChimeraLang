@@ -67,7 +67,9 @@ gate_decl          = "gate" , IDENT , "(" , [ param_list ] , ")"
 gate_option        = "branches" , ":" , INT_LIT , NEWLINE
                    | "collapse" , ":" , IDENT , NEWLINE
                    | "threshold" , ":" , number , NEWLINE
-                   | "fallback" , ":" , IDENT , NEWLINE ;
+                   | "fallback" , ":" , ( IDENT | STRING_LIT ) , NEWLINE ;
+(* fallback accepts a bare identifier or a string literal; the parser takes
+   the literal token value either way. *)
 
 (* ------------------------------------------------------------------ *)
 (* Goal / reason / val                                                 *)
@@ -171,7 +173,16 @@ emit_stmt          = "emit" , expr , NEWLINE ;
 for_stmt           = "for" , IDENT , "in" , expr , NEWLINE
                    , { statement }
                    , "end" , NEWLINE ;
-detect_stmt        = "detect" , expr , NEWLINE ;
+detect_stmt        = "detect" , IDENT , NEWLINE
+                   , { IDENT , ":" , expr , NEWLINE }
+                   , "end" , NEWLINE ;
+(* Inline hallucination-detection probe. The IDENT names the probe (e.g.
+   "hallucination"); the key/value lines configure it. Supported keys:
+   strategy ("range" | "dictionary" | "confidence_threshold"),
+   on (the evaluated target expression), valid_range ([lo, hi] for the
+   "range" strategy), allowed_values (for "dictionary"), threshold (for
+   "confidence_threshold"), action ("flag"). See Parser._parse_detect and
+   VM._builtin_detect; examples/advanced_reasoning.chimera shows use. *)
 expr_stmt          = expr , NEWLINE ;
 
 (* ------------------------------------------------------------------ *)
