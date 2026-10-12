@@ -1,5 +1,7 @@
 name: Publish to PyPI
 
+# Publishes only when a GitHub release is published (i.e. from a tag) or on an explicit,
+# confirmed manual dispatch. Pushes to main never publish.
 on:
   release:
     types: [published]
@@ -9,14 +11,11 @@ on:
         description: "Publish the current ref to PyPI"
         required: true
         type: boolean
-  push:
-    branches: [main]
-    paths: ["pyproject.toml", ".github/workflows/publish.yml"]
 
 jobs:
   publish:
     name: Build and publish package
-    if: github.event_name == 'release' || github.event_name == 'push' || inputs.confirm_publish == true
+    if: github.event_name == 'release' || inputs.confirm_publish == true
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
