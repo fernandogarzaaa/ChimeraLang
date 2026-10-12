@@ -25,6 +25,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   fallback. Ten new tests in `tests/test_adapters.py` (no network).
 
 
+### Changed
+
+- **Publishing.** `publish.yml` publishes to PyPI only when a GitHub
+  release is published or on a confirmed manual dispatch; pushes to
+  `main` never publish (#28).
+- **Docs.** `grammar.ebnf` detect/fallback rules now match the parser (#27).
+
+## [0.3.0] - 2026-10-03
+
+Published to PyPI as `chimeralang 0.3.0` from commit `2aa2c72`.
+
+### Added
 
 - **Static guard-dominance check.** New `_pass_guard_dominance` lowering
   pass (between structural and dead-belief elimination): every
