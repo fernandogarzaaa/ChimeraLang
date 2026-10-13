@@ -164,6 +164,7 @@ def cmd_run(path: str, *, show_trace: bool = False, extra_args: list[str] | None
                 sys.exit(1)
             print(f"chimera: using calibrator {calibrator_path} "
                   f"(n={calibrator.n}, fit {calibrator.fit_date})")
+        from chimera.cir.executor import GuardViolation
         from chimera.cir.lower import LoweringError
         try:
             cir_result = run_cir(program, save_symbols=save_sym, load_symbols=load_sym,
@@ -172,6 +173,10 @@ def cmd_run(path: str, *, show_trace: bool = False, extra_args: list[str] | None
                                  strict_guard=strict_guard)
         except LoweringError as e:
             print(f"chimera: lowering error: {e}", file=sys.stderr)
+            sys.exit(1)
+        except GuardViolation as e:
+            # A strict guard halting the run is the intended outcome, not a crash.
+            print(f"chimera: guard violation: {e}", file=sys.stderr)
             sys.exit(1)
         if cert_out:
             from chimera.cir.certify import certify_cir
@@ -480,7 +485,7 @@ def cmd_repl() -> None:
     """Interactive Read-Eval-Print Loop for ChimeraLang."""
     import readline  # noqa: F401 — enables history & arrow keys on most platforms
 
-    print("ChimeraLang REPL v0.3.0  (type ':exit' or Ctrl-D to quit, ':help' for help)")
+    print("ChimeraLang REPL v0.4.0  (type ':exit' or Ctrl-D to quit, ':help' for help)")
     print()
 
     vm = ChimeraVM()
@@ -571,7 +576,7 @@ def _print_node(node: object, indent: int = 0) -> None:
 # ---------------------------------------------------------------------------
 
 USAGE = """\
-ChimeraLang v0.3.0 — A programming language for AI cognition
+ChimeraLang v0.4.0 — A programming language for AI cognition
 
 Usage:
   chimera run     <file.chimera> [--no-capability-check]
@@ -608,6 +613,23 @@ Options:
   --json            Emit JSON for RAG
   --help            Show this message
 """
+
+
+def _flag(flag_args: list[str], name: str, default: str | None = None) -> str | None:
+    """Value of ``--name=VALUE`` (split on the first ``=`` only, so values such
+    as file paths may themselves contain ``=``)."""
+    prefix = f"--{name}="
+    return next((a[len(prefix):] for a in flag_args if a.startswith(prefix)), default)
+
+
+def _number_flag(flag_args: list[str], name: str, default: str, kind: type) -> int | float:
+    raw = _flag(flag_args, name, default)
+    try:
+        return kind(raw)
+    except (TypeError, ValueError):
+        what = "an integer" if kind is int else "a number"
+        print(f"chimera: --{name} expects {what}, got {raw!r}", file=sys.stderr)
+        sys.exit(2)
 
 
 def main() -> None:
@@ -652,14 +674,14 @@ def main() -> None:
         ),
         "compile": lambda: cmd_compile(
             filepath,
-            backend=next((a.split("=")[1] for a in flag_args if a.startswith("--backend=")), "pytorch"),
-            out=next((a.split("=")[1] for a in flag_args if a.startswith("--out=")), None),
+            backend=_flag(flag_args, "backend", "pytorch"),
+            out=_flag(flag_args, "out"),
         ),
         "rag": lambda: cmd_rag(
             filepath,
-            query=next((a.split("=", 1)[1] for a in flag_args if a.startswith("--query=")), ""),
-            top_k=int(next((a.split("=", 1)[1] for a in flag_args if a.startswith("--top-k=")), "3")),
-            min_similarity=float(next((a.split("=", 1)[1] for a in flag_args if a.startswith("--min-similarity=")), "0.25")),
+            query=_flag(flag_args, "query", ""),
+            top_k=_number_flag(flag_args, "top-k", "3", int),
+            min_similarity=_number_flag(flag_args, "min-similarity", "0.25", float),
             as_json="--json" in flag_args,
         ),
     }
