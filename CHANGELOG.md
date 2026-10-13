@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-13
+
+### Fixed
+
+- **CLI: strict guard failure is a clean error.** `chimera run` on a program
+  whose `strict: true` guard fails (e.g. `examples/strict_guarded_pipeline.chimera`)
+  printed a Python traceback; it now prints
+  `chimera: guard violation: guard 'x' FAILED: ...` and exits 1.
+- **CLI: flag values may contain `=`.** `chimera compile --out=model=v1.py`
+  wrote to `model`; `--out`/`--backend` now split on the first `=` only.
+- **CLI: bad numeric flags are usage errors.** `chimera rag --top-k=abc` (or a
+  non-numeric `--min-similarity`) raised `ValueError` with a traceback; it now
+  prints `--top-k expects an integer, got 'abc'` and exits 2.
+
 ### Added
 
 - **Repository hygiene.** Dependabot (uv, pip for `experiments/h1_pooling`,
